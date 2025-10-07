@@ -1,0 +1,25 @@
+{
+  "name": "eventfinder",
+  "version": "0.1.0",
+  "description": "An LLM script package for finding and processing events",
+  "main": "build/script.md",
+  "scripts": {
+    "init": "node scripts/init.js",
+    "setup": "npm run setup:build && cd setup/build && claude-code",
+    "setup:build": "node scripts/setup-build.js",
+    "clean": "node -e \"const fs = require('fs'); if (fs.existsSync('./build')) fs.rmSync('./build', { recursive: true });\"",
+    "prebuild": "npm run clean",
+    "build": "npm run build:dirs && npm run build:copy",
+    "build:dirs": "node -e \"const fs = require('fs'); ['build', 'build/.claude', 'build/.claude/commands', 'build/context'].forEach(dir => fs.mkdirSync(dir, { recursive: true }));\"",
+    "build:copy": "node scripts/build.js"
+  },
+  "keywords": [
+    "llm",
+    "claude",
+    "agent",
+    "script"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {}
+}
