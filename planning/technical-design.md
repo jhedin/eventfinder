@@ -21,9 +21,11 @@ EventFinder consists of three main components:
 │              ↓                           ↓                   │
 │    ┌──────────────────┐        ┌─────────────────┐          │
 │    │ Slash Commands   │        │  Context Files  │          │
-│    │ /add-site        │        │  - domain.md    │          │
-│    │ /add-interest    │        │  - examples.md  │          │
-│    │ /run-now         │        │  - templates    │          │
+│    │ /discover-events │        │  - domain.md    │          │
+│    │ /add-source      │        │  - examples.md  │          │
+│    │ /add-directory   │        │  - templates    │          │
+│    │ (see slash-      │        │                 │          │
+│    │  commands.md)    │        │                 │          │
 │    └──────────────────┘        └─────────────────┘          │
 └─────────────────────────────────────────────────────────────┘
                    ↓                           ↓
@@ -40,99 +42,95 @@ EventFinder consists of three main components:
 
 ### Database Schema (SQLite)
 
+See `data/schema.sql` for the complete schema with indexes and views.
+
+**Design Decisions**:
+- **Event Identity**: `event_hash = hash(title + venue)` for deduplication
+- **Recurring Events**: Separate `events` and `event_instances` tables (one event can have multiple dates)
+- **Updates**: Ignored for MVP - once discovered, event details don't change
+- **Sent Tracking**: Track per-event with status ('sent', 'excluded', 'skipped')
+- **User Preferences**: Stored in `data/user-preferences.md` (not in database)
+
 #### `sources` table
+Tracks event websites/calendars we monitor.
+
 ```sql
 CREATE TABLE sources (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,              -- User-friendly name
-  url TEXT NOT NULL UNIQUE,        -- Source URL
-  type TEXT NOT NULL,              -- 'rss', 'html', 'api'
-  category TEXT,                   -- 'music', 'comedy', 'sports', etc.
-  scraper_config TEXT,             -- JSON: selectors, patterns, etc.
-  active BOOLEAN DEFAULT 1,        -- Is this source enabled?
-  last_checked_at DATETIME,        -- Last successful fetch
-  last_error TEXT,                 -- Last error message (if any)
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  url TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,                 -- "The Palomino Live Events"
+  description TEXT,                   -- For context and relevance matching
+  added_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_checked_at TIMESTAMP,
+  last_success_at TIMESTAMP,
+  active INTEGER NOT NULL DEFAULT 1,  -- 1=active, 0=disabled
+  consecutive_failures INTEGER NOT NULL DEFAULT 0,
+  error_message TEXT,                 -- Full error for debugging
+  error_type TEXT                     -- 'timeout', '404', '500', 'parse_error', etc.
 );
-```
-
-#### `interests` table
-```sql
-CREATE TABLE interests (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  type TEXT NOT NULL,              -- 'artist', 'venue', 'genre', 'keyword'
-  value TEXT NOT NULL,             -- The actual interest (e.g., "Fleet Foxes")
-  priority TEXT DEFAULT 'medium',  -- 'high', 'medium', 'low'
-  active BOOLEAN DEFAULT 1,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX idx_interests_type ON interests(type);
-CREATE INDEX idx_interests_value ON interests(value);
 ```
 
 #### `events` table
+Base event information (without specific dates).
+
 ```sql
 CREATE TABLE events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  event_hash TEXT NOT NULL UNIQUE, -- SHA256(title + date + venue)
-  source_id INTEGER,               -- FK to sources
-
-  -- Event details
+  event_hash TEXT NOT NULL UNIQUE,    -- hash(title + venue) for dedup
   title TEXT NOT NULL,
+  venue TEXT,
   description TEXT,
-  event_date DATETIME NOT NULL,
-  event_time TEXT,                 -- Time as string (e.g., "8:00 PM")
-  timezone TEXT,                   -- IANA timezone (e.g., "America/Los_Angeles")
-
-  -- Location
-  venue_name TEXT,
-  venue_address TEXT,
-  city TEXT,
-
-  -- Links
+  price TEXT,                         -- "$25", "Free", "$15-25", etc.
   event_url TEXT,
   ticket_url TEXT,
-  image_url TEXT,
-
-  -- Tickets
-  ticket_sale_date DATETIME,       -- When tickets go on sale
-  price_min DECIMAL(10,2),
-  price_max DECIMAL(10,2),
-
-  -- Categorization
-  artist TEXT,                     -- Primary artist/performer
-  genre TEXT,                      -- Genre/category
-
-  -- Matching
-  interest_match_score INTEGER,    -- How well this matches interests
-  matched_interests TEXT,          -- JSON array of matched interest IDs
-
-  -- Tracking
-  first_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  sent_in_digest_id INTEGER,       -- FK to sent_digests (null if not sent)
-
-  FOREIGN KEY (source_id) REFERENCES sources(id)
+  source_id INTEGER NOT NULL,
+  source_url TEXT NOT NULL,
+  discovered_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
 );
-CREATE INDEX idx_events_hash ON events(event_hash);
-CREATE INDEX idx_events_date ON events(event_date);
-CREATE INDEX idx_events_sent ON events(sent_in_digest_id);
 ```
 
-#### `sent_digests` table
+#### `event_instances` table
+Specific dates/times for events. One event can have multiple instances.
+
 ```sql
-CREATE TABLE sent_digests (
+CREATE TABLE event_instances (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  event_count INTEGER,
-  email_to TEXT,
-  email_subject TEXT,
-  email_body TEXT,                 -- Full HTML body (for reference)
-  success BOOLEAN DEFAULT 1,
-  error_message TEXT
+  event_id INTEGER NOT NULL,
+  instance_date DATE NOT NULL,        -- ISO 8601: YYYY-MM-DD
+  instance_time TIME,                 -- ISO 8601: HH:MM:SS (null if no time)
+  end_date DATE,                      -- For multi-day events
+  timezone TEXT NOT NULL DEFAULT 'America/Edmonton',
+  ticket_sale_date DATE,
+  ticket_sale_time TIME,
+  FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
 );
 ```
+
+**Example**: "Christmas Tea" on Nov 30, Dec 7, Dec 21:
+- 1 row in `events` (title="Christmas Tea", venue="Lougheed House")
+- 3 rows in `event_instances` (one per date)
+
+#### `sent_events` table
+Tracks which events we've notified the user about.
+
+```sql
+CREATE TABLE sent_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id INTEGER NOT NULL,
+  instance_id INTEGER,                -- Optional: specific instance
+  sent_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  status TEXT NOT NULL DEFAULT 'sent', -- 'sent', 'excluded', 'skipped'
+  reason TEXT,                        -- Why excluded/skipped
+  FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+  FOREIGN KEY (instance_id) REFERENCES event_instances(id) ON DELETE CASCADE
+);
+```
+
+**Status values**:
+- `'sent'` - Successfully included in digest
+- `'excluded'` - Didn't match user preferences
+- `'skipped'` - Manually excluded by user
 
 ## Configuration Files
 
@@ -611,9 +609,13 @@ console.log(`EventFinder scheduled to run daily at ${digestTime}`);
 - Email sending (to test account)
 
 ### Manual Tests
-- `/add-site` with various site types
-- `/test-digest` to preview formatting
-- Full workflow end-to-end
+- `/add-source` with various site types
+- `/add-directory` with venue directory pages
+- `/test-source` to validate extraction
+- `/preview-digest` to preview email formatting
+- Full workflow end-to-end with `/discover-events`
+
+See `planning/slash-commands.md` for complete command specifications.
 
 ## Security Considerations
 
