@@ -13,6 +13,9 @@ node_modules/
 # MCP configuration (project-level, not for the agent)
 .mcp.json
 
+# Claude Code settings (contains API keys and permissions)
+.claude/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
