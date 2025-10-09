@@ -561,15 +561,15 @@ I'm not interested in:
 ### Environment Variables (.env)
 
 ```bash
-# SendGrid SMTP Configuration
-SMTP_HOST=smtp.sendgrid.net
+# Mailgun SMTP Configuration
+SMTP_HOST=smtp.mailgun.org
 SMTP_PORT=587
-SMTP_USER=apikey
-SMTP_PASSWORD=<sendgrid_api_key>
+SMTP_USER=<your-sandbox-domain>  # e.g., postmaster@sandboxXXX.mailgun.org
+SMTP_PASSWORD=<mailgun_smtp_password>
 
 # Email Addresses
-EMAIL_FROM=your-verified-email@gmail.com
-EMAIL_TO=your-email@gmail.com
+EMAIL_FROM=<your-sandbox-domain>@mailgun.org
+EMAIL_TO=your-email@gmail.com  # Must be authorized recipient
 
 # Database
 DATABASE_PATH=./data/eventfinder.db
@@ -579,9 +579,9 @@ TICKETMASTER_API_KEY=your_key_here
 ```
 
 **Required Fields:**
-- SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD (for SendGrid)
-- EMAIL_FROM (verified sender address)
-- EMAIL_TO (digest recipient)
+- SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD (for Mailgun)
+- EMAIL_FROM (sandbox domain sender)
+- EMAIL_TO (authorized recipient - must verify first)
 - DATABASE_PATH (SQLite database location)
 
 ---

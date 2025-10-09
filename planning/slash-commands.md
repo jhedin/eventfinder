@@ -32,7 +32,7 @@ This document defines all slash commands available in EventFinder, their purpose
 **Dependencies**:
 - Playwright MCP (web fetching)
 - SQLite MCP (database queries)
-- Nodemailer + SendGrid (email)
+- Nodemailer + Mailgun (email)
 - ical-generator (calendar invites)
 
 **Workflow**:
@@ -44,7 +44,7 @@ This document defines all slash commands available in EventFinder, their purpose
    - Check SQLite for duplicates
 4. LLM matches events to preferences
 5. Generate HTML + text email with iCal attachments
-6. Send via SendGrid SMTP
+6. Send via Mailgun SMTP
 7. Update SQLite with sent events
 
 **Output**:

@@ -118,7 +118,7 @@ For detailed rationale, see `planning/DECISIONS.md`. Quick summary:
 - Manual trigger (`/discover-events` command)
 - Edit files directly (`user-preferences.md`, `sources.json`)
 - Playwright MCP handles all websites (RSS is just structured HTML)
-- SendGrid for safe email sending (no Gmail ban risk)
+- Mailgun sandbox for safe email sending (no Gmail ban risk, 5k emails/month)
 - Single user, daily workflow
 
 **Deferred to Later**:

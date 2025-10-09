@@ -246,7 +246,7 @@ Research and implement automation:
 - ✅ Send with 2 iCal attachments per event:
   - Ticket sale reminder
   - Event date
-- ✅ SMTP via SendGrid
+- ✅ SMTP via Mailgun
 
 **Explicitly NOT in MVP**:
 - ❌ Automated scheduling (Phase 5)
@@ -275,29 +275,33 @@ Research and implement automation:
 
 ## Q11: Email Sending? ✅
 
-**Decision**: SendGrid free tier (100 emails/day)
+**Decision**: Mailgun free tier (5,000 emails/month, sandbox domain)
 
 ### Implementation
-- **SendGrid SMTP** for sending
-- Send FROM: `eventfinder@sendgrid.net` (or verified domain)
-- Send TO: User's Gmail address
-- User receives in Gmail inbox (safe)
+- **Mailgun SMTP** with sandbox domain
+- Send FROM: `sandbox*.mailgun.org` (auto-created)
+- Send TO: Up to 5 authorized recipients
+- No custom domain needed
 - iCal attachments work perfectly
 
-### Backup Option
-- **Fastmail** ($3/month) if SendGrid becomes limiting
+### Key Benefits
+- 5,000 emails/month (vs 100/day with SendGrid)
+- No custom domain verification required
+- Sandbox domain works for personal use
+- 5 authorized recipients perfect for single user
+- No credit card required
 
 **Rationale**:
 - User has Gmail (primary) - too risky for automation
 - Getting banned from Google = catastrophic
-- SendGrid free tier perfect for single-user daily digest
+- Mailgun sandbox perfect for single-user daily digest
 - Built for automation, zero ban risk
 - Can still receive at Gmail safely
-- Easy migration to Fastmail if needed
+- Simple setup with pre-authorized recipients
 
 **Setup**:
-- `setup/src/guides/sendgrid-smtp.md` - SendGrid setup guide
-- Nodemailer configured with SendGrid SMTP
+- `setup/src/guides/mailgun-smtp.md` - Mailgun setup guide
+- Nodemailer configured with Mailgun SMTP
 
 ---
 
@@ -307,7 +311,7 @@ Research and implement automation:
 - **LLM**: Claude Code (interactive) / Claude API (future automation)
 - **Database**: SQLite via MCP server
 - **Web Fetching**: Playwright MCP, WebFetch tool
-- **Email**: Nodemailer + SendGrid SMTP
+- **Email**: Nodemailer + Mailgun SMTP
 - **Calendar**: ical-generator
 
 ### MCP Servers
@@ -368,7 +372,7 @@ src/
 ### Phase 3: Email Digest (1 week)
 - iCal generation
 - Email templates
-- SendGrid integration
+- Mailgun integration
 - End-to-end workflow
 
 ### Phase 4: Polish & Refinement (1 week)
@@ -413,7 +417,7 @@ src/
 ### Technical Risks
 - **Playwright MCP complexity**: Start with simple sites, iterate
 - **Token usage for matching**: Acceptable for quality, monitor costs
-- **Email deliverability**: SendGrid handles this professionally
+- **Email deliverability**: Mailgun sandbox handles this professionally
 
 ### User Experience Risks
 - **Setup complexity**: Guided setup assistant addresses this
@@ -421,7 +425,7 @@ src/
 - **Missing important events**: User can adjust preferences over time
 
 ### Operational Risks
-- **Gmail ban**: Eliminated by using SendGrid
+- **Gmail ban**: Eliminated by using Mailgun
 - **Service dependencies**: All have free tiers or alternatives
 - **Android process killing**: Manual trigger works around this for MVP
 
@@ -451,7 +455,7 @@ src/
 | Timezones | Store IANA, display local | 2 |
 | APIs | Only if needed (Phase 4+) | 4+ |
 | MVP | Manual workflow, basic features | 1-3 |
-| Email Sending | SendGrid free tier | 3 |
+| Email Sending | Mailgun sandbox (5k/mo) | 3 |
 
 ---
 
