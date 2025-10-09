@@ -311,14 +311,20 @@ Research and implement automation:
 - **LLM**: Claude Code (interactive) / Claude API (future automation)
 - **Database**: SQLite via MCP server
 - **Web Fetching**: Playwright MCP, WebFetch tool
-- **Email**: Nodemailer + Mailgun SMTP
-- **Calendar**: ical-generator
+- **Email**: Custom SMTP MCP server (Mailgun backend)
+- **Calendar**: ical-generator (integrated in SMTP MCP)
 
 ### MCP Servers
-- **SQLite MCP** - Database operations
-- **Playwright MCP** - Website fetching and markdown conversion
+- **SQLite MCP** - Database operations (no credentials needed)
+- **Playwright MCP** - Website fetching and markdown conversion (no credentials)
+- **SMTP Email MCP** - Email sending with iCal attachments (reads .env for credentials)
 - *Future*: Custom MCPs for specific sites if needed
 - *Future*: API MCPs (Ticketmaster, Eventbrite) only if needed
+
+### Security Model
+- **Agent-facing MCPs** (src/mcp.json): No credentials, agent has full access
+- **SMTP MCP server**: Reads `.env` from project root, agent never sees credentials
+- **Capability-based**: Agent calls tools, not credentials
 
 ### Node.js Scripts (Infrastructure)
 - `scripts/init-db.js` - Database initialization

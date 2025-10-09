@@ -1,11 +1,21 @@
 {
   "mcpServers": {
-    "example-api": {
-      "type": "http",
-      "url": "https://api.example.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${EXAMPLE_API_KEY}"
-      }
+    "sqlite": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-sqlite",
+        "--db-path",
+        "./data/eventfinder.db"
+      ]
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@executeautomation/playwright-mcp-server"]
+    },
+    "smtp-email": {
+      "command": "node",
+      "args": ["./mcp-servers/smtp-email/index.js"]
     }
   }
 }

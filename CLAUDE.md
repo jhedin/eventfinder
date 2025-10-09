@@ -90,13 +90,21 @@ A separate LLM script package that guides users through configuration:
 - `eventfinder.db` - SQLite database (events, sources metadata, sent digests)
 - `schema.sql` - Database schema definition
 
+### MCP Servers (`mcp-servers/`)
+- `smtp-email/` - Custom MCP server for sending digest emails
+  - Reads `.env` for SMTP credentials (agent never sees them)
+  - Provides `send_digest_email` tool to agent
+  - Generates iCal attachments automatically
+  - Configured in `src/mcp.json` (builds to `build/.mcp.json`)
+
 ### Design Philosophy
 - **Separation of concerns**: Development context vs execution context
 - **Version control**: Only `src/` and `setup/src/` are tracked, `build/` is generated
 - **Authoring first**: Structure optimized for human editing, built for LLM execution
 - **Modularity**: Context, scripts, templates, and commands are organized separately
 - **Self-documenting**: The setup assistant is itself an LLM script that guides configuration
-- **MCP-first**: Use MCP servers for infrastructure (SQLite, Playwright), Node.js only for setup
+- **MCP-first**: Use MCP servers for infrastructure (SQLite, Playwright, SMTP)
+- **Security-first**: Agent has capabilities (MCP tools), not credentials (.env)
 - **LLM orchestration**: LLM extracts events from markdown, matches to preferences, generates emails
 
 ## Key Technical Decisions
@@ -106,8 +114,8 @@ For detailed rationale, see `planning/DECISIONS.md`. Quick summary:
 **Infrastructure**:
 - **Database**: SQLite via MCP server (runtime), Node.js scripts (schema setup)
 - **Web Fetching**: Playwright MCP (converts to markdown), WebFetch (simple fetches)
-- **Email**: SendGrid SMTP (free tier, 100 emails/day) via Nodemailer
-- **Calendar**: ical-generator for iCal attachments
+- **Email**: Custom SMTP MCP server (Mailgun backend, 100 emails/day free)
+- **Calendar**: ical-generator integrated in SMTP MCP server
 
 **LLM Workflow**:
 - **Event Extraction**: MCP fetches page → markdown → LLM extracts JSON

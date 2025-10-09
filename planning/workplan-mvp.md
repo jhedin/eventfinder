@@ -3,6 +3,20 @@
 **Based on**: planning/DECISIONS.md final approach
 **Goal**: Manual workflow, Playwright MCP, LLM-based matching, Mailgun email
 
+## Security Model
+
+**Agent never sees credentials**:
+- `.env` file (gitignored) contains SMTP passwords, API keys
+- `src/mcp.json` configured with **no credentials**
+- Custom SMTP MCP server reads `.env` from project root
+- Agent calls `send_digest_email` tool, server handles credentials
+- Works with Claude Code, Claude API, and future local LLMs
+
+**MCP Servers**:
+- `sqlite` - Database (no credentials needed)
+- `playwright` - Web fetching (no credentials needed)
+- `smtp-email` - Email sending (reads .env, agent can't access)
+
 ---
 
 ## Phase 0: Foundation ✅ COMPLETE
@@ -291,29 +305,33 @@ Does this event match the user's interests?
 
 **Goal**: Generate and send email with calendar invites
 
-### 3.1: iCal Generation
+### 3.1: SMTP MCP Server Setup
 
 **Tasks:**
-- Install `ical-generator` npm package
-- Create Node.js helper: `scripts/generate-ical.js`
-- Generate event reminders (1 day + 3 hours before)
-- Generate ticket reminders (day of, morning)
-- Create combined iCal files per digest
+- Install dependencies in `mcp-servers/smtp-email/`
+- Test SMTP connection with Mailgun
+- Add MCP server to `src/mcp.json`
+- Test `send_digest_email` tool
 
 **Deliverables:**
-- `scripts/generate-ical.js` - iCal generation
-- Combined `.ics` files for attachment
+- Working SMTP MCP server
+- `setup/src/guides/mailgun-smtp.md` - Setup guide
 
-**iCal details** (from `planning/data-formats.md`):
-- `events-YYYY-MM-DD.ics` - All event reminders
-- `tickets-YYYY-MM-DD.ics` - All ticket sale reminders
-- Filename format: `{YYYY-MM-DD}-{title-slug}.ics`
+**MCP Configuration** (already in `src/mcp.json`):
+```json
+{
+  "smtp-email": {
+    "command": "node",
+    "args": ["./mcp-servers/smtp-email/index.js"]
+  }
+}
+```
 
 **Acceptance:**
-- [ ] Generates valid .ics files
-- [ ] Event reminders at correct times
-- [ ] Ticket reminders at correct times
-- [ ] Works in Gmail, Outlook, Apple Calendar
+- [ ] MCP server starts without errors
+- [ ] `test_smtp_connection` tool works
+- [ ] Can call from Claude Code
+- [ ] Reads .env correctly
 
 ### 3.2: Email Templates
 
@@ -349,49 +367,58 @@ Subject: 8 New Events (Oct 15 - Nov 22)
 - [ ] All event details included
 - [ ] Links work correctly
 
-### 3.3: Mailgun Integration
+### 3.3: Email Sending via MCP
 
 **Tasks:**
-- Install `nodemailer` npm package
-- Configure Mailgun SMTP in `.env`
-- Create Node.js helper: `scripts/send-email.js`
-- Send multipart email (HTML + text)
-- Attach combined iCal files
+- Query unsent events from database
+- Render HTML + plain text email from templates
+- Prepare events array for MCP tool
+- Call `send_digest_email` tool via smtp-email MCP
 - Mark events as sent in database
 
-**Deliverables:**
-- `scripts/send-email.js` - Email sending
-- `setup/src/guides/mailgun-smtp.md` - Setup guide
-
-**Mailgun config** (in `.env`):
-```bash
-SMTP_HOST=smtp.mailgun.org
-SMTP_PORT=587
-SMTP_USER=postmaster@sandboxXXX.mailgun.org
-SMTP_PASSWORD=<smtp-password>
-EMAIL_FROM=postmaster@sandboxXXX.mailgun.org
-EMAIL_TO=your-email@gmail.com  # Must be authorized
+**MCP Tool Usage**:
+```javascript
+// Agent calls this via smtp-email MCP
+send_digest_email({
+  to: "user@gmail.com",
+  subject: "8 New Events (Oct 15 - Nov 22)",
+  html: "<html>...</html>",
+  text: "Plain text version...",
+  events: [
+    {
+      title: "Jazz Night",
+      venue: "Blue Note",
+      instances: [{ date: "2025-10-15", time: "20:00:00", ... }]
+    }
+  ]
+})
 ```
 
+**What the MCP Server Does** (agent doesn't see this):
+- Reads SMTP credentials from `.env`
+- Generates iCal files automatically
+- Sends email with attachments
+- Returns success/failure
+
 **Acceptance:**
-- [ ] Email sends successfully
+- [ ] Email sends successfully via MCP tool
 - [ ] HTML and plain text both included
-- [ ] iCal files attached correctly
+- [ ] iCal files generated and attached correctly
 - [ ] Calendar invites work when opened
 - [ ] Events marked as sent in DB
+- [ ] Agent never sees SMTP credentials
 
 ### 3.4: End-to-End Integration
 
 **Tasks:**
 - Update `/discover-events` to optionally send digest
-- Add `--send` flag to trigger email
 - Query unsent events from database
-- Generate email and iCals
-- Send via Mailgun
+- Render email templates (HTML + text)
+- Call `send_digest_email` MCP tool
 - Update sent_events table
 
 **Deliverables:**
-- Updated `src/commands/discover-events.md` with --send flag
+- Updated `src/commands/discover-events.md` with email workflow
 
 **Usage:**
 ```bash
