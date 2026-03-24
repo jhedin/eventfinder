@@ -2,6 +2,7 @@
   "name": "eventfinder",
   "version": "0.1.0",
   "description": "An LLM script package for finding and processing events",
+  "type": "module",
   "main": "build/script.md",
   "scripts": {
     "init": "node scripts/init.js",
@@ -21,5 +22,9 @@
   ],
   "author": "",
   "license": "MIT",
-  "devDependencies": {}
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "form-data": "^4.0.4",
+    "mailgun.js": "^12.1.0"
+  }
 }
