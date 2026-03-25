@@ -28,10 +28,11 @@ const params = paramArgs.map(p => JSON.parse(p));
 const db = new Database(DB_PATH);
 const stmt = db.prepare(sql);
 
-// Determine if this is a SELECT or a write operation
-const isSelect = sql.trim().toUpperCase().startsWith('SELECT');
+// Determine if this returns rows (SELECT or RETURNING clause)
+const upper = sql.trim().toUpperCase();
+const returnsRows = upper.startsWith('SELECT') || upper.includes(' RETURNING ');
 
-if (isSelect) {
+if (returnsRows) {
   const rows = stmt.all(...params);
   console.log(JSON.stringify(rows, null, 2));
 } else {
