@@ -28,9 +28,9 @@ const params = paramArgs.map(p => JSON.parse(p));
 const db = new Database(DB_PATH);
 const stmt = db.prepare(sql);
 
-// Determine if this returns rows (SELECT or RETURNING clause)
+// Determine if this returns rows (SELECT, PRAGMA, or RETURNING clause)
 const upper = sql.trim().toUpperCase();
-const returnsRows = upper.startsWith('SELECT') || upper.includes(' RETURNING ');
+const returnsRows = upper.startsWith('SELECT') || upper.startsWith('PRAGMA') || upper.includes(' RETURNING ');
 
 if (returnsRows) {
   const rows = stmt.all(...params);
