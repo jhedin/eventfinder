@@ -143,21 +143,6 @@ node scripts/db-query.js "UPDATE sources SET active = 0 WHERE consecutive_failur
 
 Note any `js_heavy: true` sources in the Step 9 summary for future Browserless.io upgrade.
 
-**On success:**
-```bash
-node scripts/db-query.js "UPDATE sources SET last_checked_at = CURRENT_TIMESTAMP, last_success_at = CURRENT_TIMESTAMP, consecutive_failures = 0, error_message = NULL, error_type = NULL WHERE id = ?" '<source_id>'
-```
-
-**On failure:**
-```bash
-node scripts/db-query.js "UPDATE sources SET last_checked_at = CURRENT_TIMESTAMP, consecutive_failures = consecutive_failures + 1, error_message = ?, error_type = ? WHERE id = ?" '"<error message>"' '"<error type>"' '<source_id>'
-```
-
-**Auto-disable after 3 failures:**
-```bash
-node scripts/db-query.js "UPDATE sources SET active = 0 WHERE consecutive_failures >= 3"
-```
-
 ---
 
 ## Step 4: Check for Duplicates
