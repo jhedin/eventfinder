@@ -61,6 +61,7 @@ Use the **Agent tool** to spawn one subagent per batch simultaneously. Pass each
 - The list of sources to fetch (id, url, name, description)
 - The event extraction instructions below
 - Today's date (for relative date parsing)
+- The output file path to write results to (e.g. `/tmp/eventfinder-batch-1.json`)
 
 **Subagent prompt template**:
 ```
@@ -72,12 +73,14 @@ Default timezone: America/Edmonton
 Sources to fetch:
 {SOURCE_LIST}
 
+Output file: {OUTPUT_FILE}
+
 For each source:
 1. Fetch the URL with WebFetch
 2. Extract all events from the page content
 3. If the page returns minimal/empty content (JS-rendered), mark as js_heavy=true
 
-Return a JSON object:
+Build a JSON object:
 {
   "results": [
     {
@@ -115,39 +118,45 @@ Rules:
 - Return empty "events": [] if no events found on a page
 - Parse dates carefully — handle "Tomorrow", "Next Friday", relative dates
 - Include all instances for recurring events
-- Return only the JSON object, no other text
+
+IMPORTANT: Write the JSON object to the output file using the Write tool, then return only a one-line summary like:
+"Batch complete: 3 sources succeeded, 1 failed, 42 events extracted. Written to {OUTPUT_FILE}"
 ```
 
 ### 3.3: Collect Subagent Results
 
-Wait for all subagents to complete. Combine all `results` arrays into a single flat list of source results.
+Wait for all subagents to complete. Each subagent has written its results to `/tmp/eventfinder-batch-N.json`. Run the import script to merge all batch files into the database:
 
-### 3.4: Update Source Status in Database
-
-For each source result, update the database:
-
-**On success:**
 ```bash
-node scripts/db-query.js "UPDATE sources SET last_checked_at = CURRENT_TIMESTAMP, last_success_at = CURRENT_TIMESTAMP, consecutive_failures = 0, error_message = NULL, error_type = NULL WHERE id = ?" '<source_id>'
+node scripts/import-batch-results.js
 ```
 
-**On failure:**
-```bash
-node scripts/db-query.js "UPDATE sources SET last_checked_at = CURRENT_TIMESTAMP, consecutive_failures = consecutive_failures + 1, error_message = ?, error_type = ? WHERE id = ?" '"<error message>"' '"<error type>"' '<source_id>'
-```
+This script:
+- Reads all `/tmp/eventfinder-batch-*.json` files
+- Deduplicates events (hash check)
+- Inserts new events into the DB
+- Updates source status (last_checked_at, consecutive_failures, etc.)
+- Outputs a summary of what was inserted vs skipped
 
-**Auto-disable after 3 failures:**
-```bash
-node scripts/db-query.js "UPDATE sources SET active = 0 WHERE consecutive_failures >= 3"
-```
+After running, the batch files are no longer needed.
 
-Note any `js_heavy: true` sources in the Step 9 summary for future Browserless.io upgrade.
+Note any `js_heavy: true` sources reported in the import script output for the Step 9 summary (future Browserless.io upgrade).
 
 ---
 
 ## Step 4: Check for Duplicates
 
-**For each extracted event**, check if it already exists.
+The import script (Step 3.3) handles hash-based deduplication automatically. After it runs, review its output to understand what was new vs. skipped.
+
+For the **preference matching** step (Step 5), query for events that were inserted in this run:
+
+```bash
+node scripts/db-query.js "SELECT e.id, e.title, e.venue, e.description, e.price, e.event_url, e.ticket_url, e.source_id FROM events e WHERE e.id NOT IN (SELECT event_id FROM sent_events)"
+```
+
+These are the events not yet assessed for relevance.
+
+> **Note**: The import script also handles fuzzy duplicate detection via the existing event_hash column. If you need to manually check for a specific duplicate:
 
 ### 4.1: Generate Event Hash
 

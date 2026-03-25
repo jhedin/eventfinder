@@ -114,18 +114,18 @@ CREATE TABLE sent_events (
   instance_id INTEGER,                -- Optional: specific instance (if tracking per-date)
 
   -- Sent tracking
-  sent_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  sent_at TIMESTAMP,                    -- NULL until actually sent
 
   -- Status tracking
-  status TEXT NOT NULL DEFAULT 'sent',  -- 'sent', 'excluded', 'skipped'
-  reason TEXT,                          -- Why excluded/skipped (for 'excluded' or 'skipped')
+  status TEXT NOT NULL DEFAULT 'pending',  -- 'pending', 'sent', 'excluded', 'skipped'
+  reason TEXT,                             -- Why matched/excluded/skipped
 
   -- Foreign keys
   FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
   FOREIGN KEY (instance_id) REFERENCES event_instances(id) ON DELETE CASCADE,
 
   -- Constraints
-  CHECK (status IN ('sent', 'excluded', 'skipped'))
+  CHECK (status IN ('pending', 'sent', 'excluded', 'skipped'))
 );
 
 CREATE INDEX idx_sent_events_event ON sent_events(event_id);
