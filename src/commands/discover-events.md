@@ -86,11 +86,11 @@ Sources to fetch:
 Output file: {OUTPUT_FILE}
 
 For each source:
-1. Fetch the URL using Bash with this command:
-   node scripts/fetch-page.js "<url>"
-   This returns the rendered HTML/text via Browserless.io (handles JS-heavy sites).
-   If BROWSERLESS_TOKEN is not set, it falls back to WebFetch.
-2. Extract all events from the page content
+1. Fetch the URL using the Bash tool with this exact command (replace URL):
+   node scripts/fetch-page.js "URL_HERE"
+   This uses Browserless.io for real browser rendering and bot bypass.
+   Do NOT use WebFetch — it gets blocked by bot protection on most sites.
+2. Extract all events from the returned HTML/text content
 3. If the page returns minimal/empty content, mark as js_heavy=true
 
 Build a JSON object:
