@@ -75,7 +75,7 @@ Use the **Agent tool** to spawn one subagent per batch simultaneously. Pass each
 
 **Subagent prompt template**:
 ```
-You are an event scraper. Fetch each URL below using WebFetch and extract events as JSON.
+You are an event scraper. Fetch each URL below using Browserless.io and extract events as JSON.
 
 Today's date: {TODAY}
 Default timezone: America/Edmonton
@@ -86,9 +86,12 @@ Sources to fetch:
 Output file: {OUTPUT_FILE}
 
 For each source:
-1. Fetch the URL with WebFetch
+1. Fetch the URL using Bash with this command:
+   node scripts/fetch-page.js "<url>"
+   This returns the rendered HTML/text via Browserless.io (handles JS-heavy sites).
+   If BROWSERLESS_TOKEN is not set, it falls back to WebFetch.
 2. Extract all events from the page content
-3. If the page returns minimal/empty content (JS-rendered), mark as js_heavy=true
+3. If the page returns minimal/empty content, mark as js_heavy=true
 
 Build a JSON object:
 {
