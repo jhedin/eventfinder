@@ -14,7 +14,7 @@ node_modules/
 .mcp.json
 
 # Claude Code settings (contains API keys and permissions)
-.claude/
+.claude/settings.local.json
 
 # Editor directories and files
 .vscode/*
