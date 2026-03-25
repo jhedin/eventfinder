@@ -26,7 +26,7 @@ The key distinction:
 - `planning/technical-design.md` - Architecture and implementation details
 - `planning/questions.md` - All design decisions with rationale
 - `planning/DECISIONS.md` - **Quick reference for all key decisions**
-- `planning/workplan.md` - Phased implementation roadmap
+- `planning/workplan-mvp.md` - Phased implementation roadmap (MVP)
 
 ## Development Commands
 
@@ -35,6 +35,7 @@ The key distinction:
 npm install          # Install dependencies
 npm run init         # Create .env from template
 npm run setup        # Launch guided setup assistant (LLM)
+node scripts/init-db.js  # Initialize SQLite database (run once after init)
 ```
 
 ### Build System
@@ -46,8 +47,17 @@ npm run clean        # Remove build artifacts
 
 ### Running Scripts
 ```bash
-npm run setup        # Run guided setup assistant
-cd build && claude-code  # Execute the main EventFinder script
+npm run setup               # Run guided setup assistant
+cd build && claude-code     # Execute the main EventFinder script
+node scripts/test-mailgun.js  # Test Mailgun SMTP connectivity
+```
+
+### Development Iteration Loop
+```bash
+# Edit source → rebuild → test
+nano src/script.md           # or src/context.md, src/commands/*.md, etc.
+npm run build
+cd build && claude-code
 ```
 
 ## Architecture
@@ -78,11 +88,9 @@ A separate LLM script package that guides users through configuration:
 - `.env` - User's API keys and configuration (gitignored, created by `npm run init`)
 - `src/mcp.json` - MCP server definitions
 
-**Important**: When adding a new MCP server to `src/mcp.json`, also create a corresponding setup guide in `setup/src/guides/` explaining how to:
-- Register for the service
-- Obtain API keys/credentials
-- Configure the MCP server
-- Test the integration
+**Important**: When adding a new MCP server to `src/mcp.json`, also create a corresponding setup guide in `setup/src/guides/` explaining how to obtain credentials, configure the server, and test the integration.
+
+**Note**: The `.env.template` file contains placeholder variables from early planning (Ticketmaster, Eventbrite, Google OAuth). The actual deployed stack uses only Mailgun SMTP variables (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`, `EMAIL_TO`).
 
 ### Data Files (`data/`)
 - `user-preferences.md` - Natural language description of user interests and location
@@ -93,9 +101,10 @@ A separate LLM script package that guides users through configuration:
 ### MCP Servers (`mcp-servers/`)
 - `smtp-email/` - Custom MCP server for sending digest emails
   - Reads `.env` for SMTP credentials (agent never sees them)
-  - Provides `send_digest_email` tool to agent
-  - Generates iCal attachments automatically
+  - Provides `send_digest_email` and `test_smtp_connection` tools
+  - Generates iCal attachments (event date + ticket sale date) via `ical-generator`
   - Configured in `src/mcp.json` (builds to `build/.mcp.json`)
+  - Has its own `package.json`; run `npm install` inside `mcp-servers/smtp-email/` if needed
 
 ### Design Philosophy
 - **Separation of concerns**: Development context vs execution context
@@ -118,9 +127,14 @@ For detailed rationale, see `planning/DECISIONS.md`. Quick summary:
 - **Calendar**: ical-generator integrated in SMTP MCP server
 
 **LLM Workflow**:
-- **Event Extraction**: MCP fetches page → markdown → LLM extracts JSON
-- **Relevance Matching**: LLM reads `data/user-preferences.md` + event → decides relevance
-- **No scoring algorithm**: Pure LLM-based matching (understands context like "The National" = band)
+- **Event Extraction**: MCP fetches page → markdown → LLM extracts JSON (template: `src/templates/extract-events-from-markdown.md`)
+- **Relevance Matching**: LLM reads `data/user-preferences.md` + event → decides relevance (pure LLM, no scoring algorithm — understands context like "The National" = band)
+- **Digest**: LLM generates HTML + plain text email, calls `send_digest_email` tool with structured event data
+
+**Database**:
+- Schema: 4 tables (`sources`, `events`, `event_instances`, `sent_events`) + 3 views (`v_sources_stats`, `v_unsent_upcoming_events`, `v_last_digest`)
+- Deduplication: `event_hash` = hash(title + venue)
+- Default timezone: `America/Edmonton` (overridable per-instance)
 
 **MVP Scope (Phase 1-3)**:
 - Manual trigger (`/discover-events` command)

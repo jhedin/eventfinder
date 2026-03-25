@@ -1,6 +1,6 @@
 # Discover Events
 
-**You are EventFinder.** Run the complete event discovery workflow: fetch sources, extract events, match to preferences, and send digest email.
+**You are EventFinder.** Run the complete event discovery workflow: fetch sources, extract events, match to preferences, and post digest to Discord.
 
 ---
 
@@ -21,42 +21,54 @@ Keep these preferences in mind throughout the workflow.
 
 ## Step 2: Query Active Sources
 
-Use **SQLite MCP** to get all active event sources:
+Run the following query using `node scripts/db-query.js`:
 
-```sql
-SELECT id, url, name, description
-FROM sources
-WHERE active = 1
-ORDER BY last_checked_at ASC NULLS FIRST
+```bash
+node scripts/db-query.js "SELECT id, url, name, description FROM sources WHERE active = 1 ORDER BY last_checked_at ASC"
 ```
 
 This gives you the websites to check for events.
 
 ---
 
+## Step 2b: Read Gmail Newsletter Inbox (optional)
+
+**If the Gmail connector is available**, read unread venue newsletters:
+
+1. Search for unread emails: `is:unread newer_than:2d`
+2. For each email: extract the plain text body
+3. Pass the body through the same event extraction process as Step 3.2 (treat it like markdown from a website)
+4. Mark each email as read after processing
+5. Associate these events with a special source (use `source_id` for a "Gmail Newsletters" source entry — create it if it doesn't exist)
+
+Feed extracted events into the same deduplication and preference matching pipeline (Steps 4–5).
+
+**If Gmail connector is not available**: Skip this step and continue.
+
+---
+
 ## Step 3: Fetch and Extract Events
 
-**For each source**, do the following:
+**For each source from Step 2**, do the following:
 
 ### 3.1: Fetch Website
 
-Use **Playwright MCP** to fetch the URL and convert to markdown:
-- Tool: `playwright_fetch` or equivalent
-- Timeout: 5 seconds
+Use the built-in **WebFetch tool** to fetch the URL:
 - On error: Log it, continue to next source
+- If the page returns empty or minimal content (likely JS-rendered): note it but continue
 
-**If markdown is truncated** (> 100KB): That's okay, extract what you can.
+**If the page appears to be JS-heavy and WebFetch returns little content**: Make a note in the summary for future Browserless.io upgrade, but continue.
 
 ### 3.2: Extract Events from Markdown
 
-Analyze the markdown and extract events as structured JSON.
+Analyze the fetched content and extract events as structured JSON.
 
 Use your understanding of:
 - Common event page patterns (dates, venues, ticket links)
 - Natural language date references ("Tomorrow", "Next Friday")
 - Event details scattered across the page
 
-**Output Format** (based on `planning/data-formats.md`):
+**Output Format**:
 ```json
 [
   {
@@ -89,34 +101,21 @@ Use your understanding of:
 
 ### 3.3: Update Source Status
 
-After fetching (success or failure), use **SQLite MCP** to update:
+After fetching (success or failure), update the database:
 
 **On success:**
-```sql
-UPDATE sources
-SET last_checked_at = CURRENT_TIMESTAMP,
-    last_success_at = CURRENT_TIMESTAMP,
-    consecutive_failures = 0,
-    error_message = NULL,
-    error_type = NULL
-WHERE id = ?
+```bash
+node scripts/db-query.js "UPDATE sources SET last_checked_at = CURRENT_TIMESTAMP, last_success_at = CURRENT_TIMESTAMP, consecutive_failures = 0, error_message = NULL, error_type = NULL WHERE id = ?" '<source_id>'
 ```
 
 **On failure:**
-```sql
-UPDATE sources
-SET last_checked_at = CURRENT_TIMESTAMP,
-    consecutive_failures = consecutive_failures + 1,
-    error_message = ?,
-    error_type = ?
-WHERE id = ?
+```bash
+node scripts/db-query.js "UPDATE sources SET last_checked_at = CURRENT_TIMESTAMP, consecutive_failures = consecutive_failures + 1, error_message = ?, error_type = ? WHERE id = ?" '"<error message>"' '"<error type>"' '<source_id>'
 ```
 
 **Auto-disable after 3 failures:**
-```sql
-UPDATE sources
-SET active = 0
-WHERE consecutive_failures >= 3
+```bash
+node scripts/db-query.js "UPDATE sources SET active = 0 WHERE consecutive_failures >= 3"
 ```
 
 ---
@@ -147,11 +146,8 @@ Example:
 
 ### 4.2: Check Exact Match
 
-Use **SQLite MCP**:
-```sql
-SELECT id, title, venue
-FROM events
-WHERE event_hash = ?
+```bash
+node scripts/db-query.js "SELECT id, title, venue FROM events WHERE event_hash = ?" '"<hash>"'
 ```
 
 If found: **Skip this event** (already in database)
@@ -159,18 +155,10 @@ If found: **Skip this event** (already in database)
 ### 4.3: Fuzzy Duplicate Check
 
 If no exact match, query for similar events:
-```sql
-SELECT id, title, venue, event_url
-FROM events e
-JOIN event_instances ei ON e.id = ei.event_id
-WHERE e.venue LIKE ?
-  AND ei.instance_date BETWEEN ? AND ?
-LIMIT 5
-```
 
-Parameters:
-- `venue LIKE`: `%{venue_keyword}%` (extract main word from venue)
-- Date range: ±3 days from event date
+```bash
+node scripts/db-query.js "SELECT id, title, venue, event_url FROM events e JOIN event_instances ei ON e.id = ei.event_id WHERE e.venue LIKE ? AND ei.instance_date BETWEEN ? AND ? LIMIT 5" '"%<venue_keyword>%"' '"<date_minus_3>"' '"<date_plus_3>"'
+```
 
 **Ask yourself**: Is this new event the same as any of these existing events?
 
@@ -225,221 +213,143 @@ or
 
 ### 5.1: Store in Database
 
-Use **SQLite MCP** to insert:
-
 **Insert event:**
-```sql
-INSERT INTO events (
-  event_hash, title, venue, description, price,
-  event_url, ticket_url, image_url, minimum_age,
-  source_id, source_url
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-RETURNING id
+```bash
+node scripts/db-query.js "INSERT INTO events (event_hash, title, venue, description, price, event_url, ticket_url, image_url, minimum_age, source_id, source_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id" '"<hash>"' '"<title>"' '"<venue>"' '"<description>"' '"<price>"' '"<event_url>"' '"<ticket_url>"' '"<image_url>"' '<minimum_age_or_null>' '<source_id>' '"<source_url>"'
 ```
 
-**Insert event instances:**
-```sql
-INSERT INTO event_instances (
-  event_id, instance_date, instance_time, end_date,
-  timezone, ticket_sale_date, ticket_sale_time
-) VALUES (?, ?, ?, ?, ?, ?, ?)
+**Insert event instances** (one call per instance):
+```bash
+node scripts/db-query.js "INSERT INTO event_instances (event_id, instance_date, instance_time, end_date, timezone, ticket_sale_date, ticket_sale_time) VALUES (?, ?, ?, ?, ?, ?, ?)" '<event_id>' '"<date>"' '"<time_or_null>"' '<end_date_or_null>' '"America/Edmonton"' '<ticket_sale_date_or_null>' '<ticket_sale_time_or_null>'
 ```
 
 **Mark status based on relevance:**
 
 If **matches = true**:
-```sql
-INSERT INTO sent_events (event_id, instance_id, status, reason)
-SELECT ?, id, 'pending', ?
-FROM event_instances WHERE event_id = ?
+```bash
+node scripts/db-query.js "INSERT INTO sent_events (event_id, instance_id, status, reason) SELECT ?, id, 'pending', ? FROM event_instances WHERE event_id = ?" '<event_id>' '"<reason>"' '<event_id>'
 ```
 
 If **matches = false**:
-```sql
-INSERT INTO sent_events (event_id, instance_id, status, reason)
-SELECT ?, id, 'excluded', ?
-FROM event_instances WHERE event_id = ?
+```bash
+node scripts/db-query.js "INSERT INTO sent_events (event_id, instance_id, status, reason) SELECT ?, id, 'excluded', ? FROM event_instances WHERE event_id = ?" '<event_id>' '"<reason>"' '<event_id>'
 ```
 
 ---
 
-## Step 6: Generate Email Digest
+## Step 6: Generate Discord Digest
 
-Query for all unsent events:
+Query for all pending (unsent) events:
 
-```sql
-SELECT
-  e.*,
-  ei.instance_date,
-  ei.instance_time,
-  ei.end_date,
-  ei.ticket_sale_date,
-  ei.ticket_sale_time
-FROM events e
-JOIN event_instances ei ON e.id = ei.event_id
-WHERE ei.id NOT IN (
-  SELECT instance_id FROM sent_events WHERE status = 'sent'
-)
-AND ei.id NOT IN (
-  SELECT instance_id FROM sent_events WHERE status = 'excluded'
-)
-ORDER BY ei.instance_date ASC
+```bash
+node scripts/db-query.js "SELECT e.*, ei.instance_date, ei.instance_time, ei.end_date, ei.ticket_sale_date, ei.ticket_sale_time, ei.id as instance_id FROM events e JOIN event_instances ei ON e.id = ei.event_id JOIN sent_events se ON se.instance_id = ei.id WHERE se.status = 'pending' ORDER BY ei.instance_date ASC"
 ```
 
-If **no unsent events**: Stop here and report "No new events to send"
+If **no pending events**: Skip to Step 8 and report "No new events to send"
 
 ### 6.1: Categorize Events
 
-Group events by category based on your understanding:
+Group events by category:
 - 🎵 **Music**: Concerts, live music, band performances
 - 🎨 **Arts & Culture**: Gallery openings, theater, film, poetry
 - 🛠️ **Workshops**: Classes, hands-on learning, craft sessions
 - 📅 **Other**: Events that don't fit above
 
-### 6.2: Generate Email Content
+### 6.2: Format Discord Messages
 
-**Subject Line**:
+Format one message per category. Each message must be **≤ 2000 characters** (Discord limit). Split into multiple messages if needed.
+
+**Format**:
 ```
-{count} New Events ({earliest_date} - {latest_date})
-```
-Example: `8 New Events (Oct 15 - Nov 22)`
+🎵 **Music** — 3 new events
 
-**HTML Email** (use template structure from `planning/data-formats.md`):
-```html
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; }
-    .category { margin: 30px 0; }
-    .event-card { border: 1px solid #ddd; padding: 15px; margin: 10px 0; }
-    .event-title { font-size: 18px; font-weight: bold; }
-    .event-meta { color: #666; font-size: 14px; }
-  </style>
-</head>
-<body>
-  <h1>🎉 {count} New Events</h1>
+**Jazz Night with Sarah Vaughan Tribute**
+📅 Fri Oct 15 at 8:00 PM · 📍 Blue Note Jazz Club · 💰 $25-$35
+🎫 <ticket_url> · 🔗 <event_url>
 
-  <div class="category">
-    <h2>🎵 Music</h2>
-    <!-- Event cards -->
-  </div>
-
-  <div class="category">
-    <h2>🎨 Arts & Culture</h2>
-    <!-- Event cards -->
-  </div>
-
-  <!-- More categories -->
-</body>
-</html>
+**The National - Live**
+📅 Sat Oct 22 at 8:00 PM · 📍 MacEwan Ballroom · 💰 $50-$75
+🎫 <ticket_url>
 ```
 
-**Plain Text Email** (markdown-style):
-```
-# 8 New Events
-
-## 🎵 Music
-
-### Jazz Night with Sarah Vaughan Tribute
-📅 Friday, October 15, 2025 at 8:00 PM
-📍 Blue Note Jazz Club
-💰 $25-$35
-🎫 Tickets: https://tickets.example.com/...
-🔗 More info: https://example.com/events/...
-
-Why this matches: User is interested in jazz music, and this is...
+Only include fields that are available (skip null fields).
 
 ---
 
-## 🎨 Arts & Culture
+## Step 7: Post to Discord
 
-...
+Use the Bash tool to POST each category message to the Discord webhook:
+
+```bash
+node -e "
+const url = process.env.DISCORD_WEBHOOK_URL;
+fetch(url, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ content: '<message>' })
+}).then(r => console.log('Status:', r.status));
+"
 ```
+
+Post a header message first:
+```
+🗓️ **EventFinder Digest** — {count} new events · {date}
+```
+
+Then one message per non-empty category.
+
+**If `DISCORD_WEBHOOK_URL` is not set**: Skip this step, log a warning, continue to Step 8.
 
 ---
 
-## Step 7: Send Email via MCP
+## Step 8: Mark Events as Sent + Save Database
 
-Use **smtp-email MCP** to send the digest:
+After successful Discord post, mark all posted instances as sent:
 
-```javascript
-send_digest_email({
-  to: process.env.EMAIL_TO,  // Or read from .env via context
-  subject: "8 New Events (Oct 15 - Nov 22)",
-  html: "<html>...</html>",
-  text: "Plain text version...",
-  events: [
-    {
-      title: "Jazz Night",
-      venue: "Blue Note",
-      description: "...",
-      event_url: "...",
-      ticket_url: "...",
-      instances: [
-        {
-          date: "2025-10-15",
-          time: "20:00:00",
-          ticket_sale_date: "2025-10-01",
-          ticket_sale_time: "09:00:00"
-        }
-      ]
-    },
-    // All other events...
-  ]
-})
+```bash
+node scripts/db-query.js "UPDATE sent_events SET status = 'sent', sent_at = CURRENT_TIMESTAMP WHERE instance_id IN (<comma_separated_instance_ids>)"
 ```
 
-The MCP server will:
-- Read SMTP credentials from `.env`
-- Generate iCal files (`events-2025-10-09.ics`, `tickets-2025-10-09.ics`)
-- Send multipart email with attachments
-- Return success/failure
+Then commit the updated database back to GitHub:
 
----
-
-## Step 8: Mark Events as Sent
-
-After successful email send, update the database:
-
-```sql
-UPDATE sent_events
-SET status = 'sent',
-    sent_at = CURRENT_TIMESTAMP
-WHERE instance_id IN (
-  -- IDs of all instances that were sent
-)
+```bash
+git config user.email "eventfinder-bot@users.noreply.github.com"
+git config user.name "EventFinder Bot"
+git add data/eventfinder.db
+git commit -m "chore: update event database [skip ci]"
+git push
 ```
+
+**If Discord post failed**: Do NOT mark as sent (events stay 'pending' for retry next run). Still commit the DB to save any newly discovered events.
 
 ---
 
 ## Step 9: Report Summary
 
-Display a summary to the user:
+Display a summary:
 
 ```
 ✅ Event Discovery Complete
 
 Sources checked: 10
-Sources succeeded: 8
-Sources failed: 2 (auto-disabled after 3 failures)
+  Succeeded: 8
+  Failed: 2
+  JS-heavy (limited data): 1
 
 Events discovered: 45
-New events: 12
-Duplicates skipped: 33
+  New: 12
+  Duplicates skipped: 33
 
 Relevance matching:
-- Matched: 8 events
-- Excluded: 4 events
+  Matched: 8 events
+  Excluded: 4 events
 
-Email sent: ✅
-- Subject: "8 New Events (Oct 15 - Nov 22)"
-- Events: 8
-- Attachments: events-2025-10-09.ics, tickets-2025-10-09.ics
-- Sent to: jhedin10@gmail.com
+Discord digest: ✅ posted (8 events across 3 categories)
+
+Database committed to GitHub: ✅
 
 Failed sources (if any):
-- example.com/events: Timeout after 5s
+  example.com/events: Timeout
 ```
 
 ---
@@ -449,15 +359,15 @@ Failed sources (if any):
 **If source fetch fails**:
 - Log error to database
 - Continue to next source
-- Don't crash the entire workflow
 
 **If event extraction fails**:
 - Log warning
 - Continue to next source
 
-**If email send fails**:
+**If Discord post fails**:
 - Report error clearly
-- Events remain in 'pending' status (will retry next run)
+- Events remain 'pending' (will retry next run)
+- Still commit DB to GitHub
 
 **If database operations fail**:
 - Report error and stop (data integrity critical)
