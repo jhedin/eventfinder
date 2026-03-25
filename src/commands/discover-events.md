@@ -4,6 +4,16 @@
 
 ---
 
+## Step 0: Install Dependencies
+
+Run this first to ensure Node dependencies are available:
+
+```bash
+npm install
+```
+
+---
+
 ## Step 1: Load User Preferences
 
 Read the file `data/user-preferences.md` to understand what events the user cares about.
