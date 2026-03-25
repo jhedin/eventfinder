@@ -57,46 +57,53 @@ Feed extracted events into the same deduplication and preference matching pipeli
 
 ---
 
-## Step 3: Fetch and Extract Events (Parallel Subagents)
+## Step 3: Fetch and Extract Events
 
-The main agent fetches all pages via Bash (using Browserless.io), writes HTML to temp files, then dispatches subagents in parallel to extract events from the pre-fetched content.
+Fetching is done by the main agent via Bash (to use Browserless.io). Extraction is then done by parallel subagents reading the pre-fetched HTML files.
 
-### 3.1: Fetch All Pages (Main Agent via Bash)
+### 3.1: Fetch All Sources via Bash
 
-For each source, fetch the page and save to a temp file:
+For each source from Step 2, run this command (replace SOURCE_ID and SOURCE_URL):
 
 ```bash
-node scripts/fetch-page.js "SOURCE_URL" > /tmp/eventfinder-page-SOURCE_ID.html 2>/tmp/eventfinder-page-SOURCE_ID.err
-echo "Exit: $?"
+node scripts/fetch-page.js "SOURCE_URL" > /tmp/eventfinder-page-SOURCE_ID.html 2>/tmp/eventfinder-page-SOURCE_ID.err && echo "OK" || echo "FAILED"
 ```
 
-Run these sequentially (one per source). If exit code is non-zero, the fetch failed — check the .err file for the error message.
+Run all fetches **sequentially** (one at a time). After each fetch:
+- If output is "OK": the HTML is in `/tmp/eventfinder-page-SOURCE_ID.html`
+- If output is "FAILED": check `/tmp/eventfinder-page-SOURCE_ID.err` for the error message
 
-### 3.2: Split into Batches and Dispatch Subagents in Parallel
+This uses Browserless.io (via `BROWSERLESS_TOKEN` env var) which renders JavaScript and bypasses bot protection. If `BROWSERLESS_TOKEN` is not set, it falls back to plain fetch.
 
-After fetching, divide sources into groups of 4–5. Use the **Agent tool** to spawn one subagent per batch simultaneously. Pass each subagent:
-- The list of sources (id, url, name) with their pre-fetched HTML file paths
-- The event extraction instructions below
+### 3.2: Dispatch Extraction Subagents in Parallel
+
+Once all fetches are done, divide the sources into batches of 4–5 and dispatch one subagent per batch simultaneously using the **Agent tool**.
+
+Pass each subagent:
+- The list of sources (id, url, name) with their fetch status (success/failed)
+- The HTML file paths for successfully fetched sources
 - Today's date (for relative date parsing)
 - The output file path to write results to (e.g. `/tmp/eventfinder-batch-1.json`)
 
 **Subagent prompt template**:
 ```
-You are an event extractor. Read pre-fetched HTML files and extract events as JSON.
+You are an event extractor. Your ONLY job is to read pre-fetched HTML files and extract events as structured JSON.
+
+DO NOT fetch any URLs. DO NOT use WebFetch. The HTML files have already been downloaded for you.
+Use ONLY the Read tool (to read HTML files) and the Write tool (to write the output JSON).
 
 Today's date: {TODAY}
 Default timezone: America/Edmonton
 
-Sources to process:
-{SOURCE_LIST_WITH_FILE_PATHS}
-
 Output file: {OUTPUT_FILE}
 
+Sources and their pre-fetched HTML files:
+{SOURCE_LIST_WITH_FILES}
+(Format: source_id | source_url | html_file | fetch_success | fetch_error)
+
 For each source:
-1. Read the pre-fetched HTML file using the Read tool (e.g. /tmp/eventfinder-page-1.html)
-2. If the file doesn't exist or is empty, mark success=false
-3. Extract all events from the HTML content
-4. If the page content is minimal/empty (JS-heavy), mark js_heavy=true
+1. If fetch_success is false: record it as failed with the fetch_error message — do NOT try to fetch it yourself
+2. If fetch_success is true: use the Read tool to read the HTML file, then extract all events from the content
 
 Build a JSON object:
 {
@@ -134,10 +141,11 @@ Build a JSON object:
 
 Rules:
 - Return empty "events": [] if no events found on a page
+- Mark js_heavy=true if the HTML looks like a JS-only shell (minimal content, no events visible)
 - Parse dates carefully — handle "Tomorrow", "Next Friday", relative dates
 - Include all instances for recurring events
 
-IMPORTANT: Write the JSON object to the output file using the Write tool, then return only a one-line summary like:
+Write the JSON object to the output file using the Write tool, then return only a one-line summary like:
 "Batch complete: 3 sources succeeded, 1 failed, 42 events extracted. Written to {OUTPUT_FILE}"
 ```
 
