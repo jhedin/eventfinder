@@ -59,21 +59,24 @@ Feed extracted events into the same deduplication and preference matching pipeli
 
 ## Step 3: Fetch and Extract Events
 
-Fetching is done by the main agent via Bash (to use Browserless.io). Extraction is then done by parallel subagents reading the pre-fetched HTML files.
+**YOU (the main agent) must fetch all pages yourself using Bash before dispatching any subagents. Do NOT dispatch subagents to fetch URLs — WebFetch is blocked by Cloudflare on all these sites.**
 
-### 3.1: Fetch All Sources via Bash
+### 3.1: Fetch All Sources via Bash (YOU do this, not subagents)
 
-For each source from Step 2, run this command (replace SOURCE_ID and SOURCE_URL):
+Run the Bash tool for **each source** from Step 2. Execute these one at a time:
 
 ```bash
 node scripts/fetch-page.js "SOURCE_URL" > /tmp/eventfinder-page-SOURCE_ID.html 2>/tmp/eventfinder-page-SOURCE_ID.err && echo "OK" || echo "FAILED"
 ```
 
-Run all fetches **sequentially** (one at a time). After each fetch:
-- If output is "OK": the HTML is in `/tmp/eventfinder-page-SOURCE_ID.html`
-- If output is "FAILED": check `/tmp/eventfinder-page-SOURCE_ID.err` for the error message
+For example, for source id=1 at https://example.com/events:
+```bash
+node scripts/fetch-page.js "https://example.com/events" > /tmp/eventfinder-page-1.html 2>/tmp/eventfinder-page-1.err && echo "OK" || echo "FAILED"
+```
 
-This uses Browserless.io (via `BROWSERLESS_TOKEN` env var) which renders JavaScript and bypasses bot protection. If `BROWSERLESS_TOKEN` is not set, it falls back to plain fetch.
+After all fetches complete, proceed to 3.2.
+
+This uses Browserless.io (via `BROWSERLESS_TOKEN` env var) which renders JavaScript and bypasses bot protection.
 
 ### 3.2: Dispatch Extraction Subagents in Parallel
 
