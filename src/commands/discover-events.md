@@ -47,61 +47,101 @@ Feed extracted events into the same deduplication and preference matching pipeli
 
 ---
 
-## Step 3: Fetch and Extract Events
+## Step 3: Fetch and Extract Events (Parallel Subagents)
 
-**For each source from Step 2**, do the following:
+Dispatch sources to subagents in **batches of 4–5** to avoid filling the main context with raw HTML. Each subagent fetches its assigned URLs and returns structured JSON events.
 
-### 3.1: Fetch Website
+### 3.1: Split Sources into Batches
 
-Use the built-in **WebFetch tool** to fetch the URL:
-- On error: Log it, continue to next source
-- If the page returns empty or minimal content (likely JS-rendered): note it but continue
+Divide the source list from Step 2 into groups of 4–5 sources. For 20 sources that's 4–5 batches.
 
-**If the page appears to be JS-heavy and WebFetch returns little content**: Make a note in the summary for future Browserless.io upgrade, but continue.
+### 3.2: Dispatch Subagents in Parallel
 
-### 3.2: Extract Events from Markdown
+Use the **Agent tool** to spawn one subagent per batch simultaneously. Pass each subagent:
+- The list of sources to fetch (id, url, name, description)
+- The event extraction instructions below
+- Today's date (for relative date parsing)
 
-Analyze the fetched content and extract events as structured JSON.
+**Subagent prompt template**:
+```
+You are an event scraper. Fetch each URL below using WebFetch and extract events as JSON.
 
-Use your understanding of:
-- Common event page patterns (dates, venues, ticket links)
-- Natural language date references ("Tomorrow", "Next Friday")
-- Event details scattered across the page
+Today's date: {TODAY}
+Default timezone: America/Edmonton
 
-**Output Format**:
-```json
-[
-  {
-    "title": "Jazz Night with Sarah Vaughan Tribute",
-    "venue": "Blue Note Jazz Club",
-    "description": "An evening celebrating Sarah Vaughan...",
-    "price": "$25-$35",
-    "event_url": "https://example.com/events/jazz-night",
-    "ticket_url": "https://tickets.example.com/jazz-night",
-    "image_url": "https://example.com/images/event.jpg",
-    "minimum_age": 18,
-    "instances": [
-      {
-        "date": "2025-10-15",
-        "time": "20:00:00",
-        "end_date": "2025-10-15",
-        "ticket_sale_date": "2025-10-01",
-        "ticket_sale_time": "09:00:00"
-      }
-    ]
-  }
-]
+Sources to fetch:
+{SOURCE_LIST}
+
+For each source:
+1. Fetch the URL with WebFetch
+2. Extract all events from the page content
+3. If the page returns minimal/empty content (JS-rendered), mark as js_heavy=true
+
+Return a JSON object:
+{
+  "results": [
+    {
+      "source_id": 1,
+      "source_url": "https://...",
+      "success": true,
+      "js_heavy": false,
+      "error": null,
+      "events": [
+        {
+          "title": "Jazz Night",
+          "venue": "Blue Note",
+          "description": "...",
+          "price": "$25",
+          "event_url": "...",
+          "ticket_url": "...",
+          "image_url": "...",
+          "minimum_age": null,
+          "instances": [
+            {
+              "date": "2026-04-15",
+              "time": "20:00:00",
+              "end_date": null,
+              "ticket_sale_date": null,
+              "ticket_sale_time": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+Rules:
+- Return empty "events": [] if no events found on a page
+- Parse dates carefully — handle "Tomorrow", "Next Friday", relative dates
+- Include all instances for recurring events
+- Return only the JSON object, no other text
 ```
 
-**Important**:
-- Return empty array `[]` if no events found
-- Parse dates carefully (handle relative dates like "Tomorrow")
-- Include all instances for recurring events
-- Timezone: Assume `America/Edmonton` unless specified
+### 3.3: Collect Subagent Results
 
-### 3.3: Update Source Status
+Wait for all subagents to complete. Combine all `results` arrays into a single flat list of source results.
 
-After fetching (success or failure), update the database:
+### 3.4: Update Source Status in Database
+
+For each source result, update the database:
+
+**On success:**
+```bash
+node scripts/db-query.js "UPDATE sources SET last_checked_at = CURRENT_TIMESTAMP, last_success_at = CURRENT_TIMESTAMP, consecutive_failures = 0, error_message = NULL, error_type = NULL WHERE id = ?" '<source_id>'
+```
+
+**On failure:**
+```bash
+node scripts/db-query.js "UPDATE sources SET last_checked_at = CURRENT_TIMESTAMP, consecutive_failures = consecutive_failures + 1, error_message = ?, error_type = ? WHERE id = ?" '"<error message>"' '"<error type>"' '<source_id>'
+```
+
+**Auto-disable after 3 failures:**
+```bash
+node scripts/db-query.js "UPDATE sources SET active = 0 WHERE consecutive_failures >= 3"
+```
+
+Note any `js_heavy: true` sources in the Step 9 summary for future Browserless.io upgrade.
 
 **On success:**
 ```bash
