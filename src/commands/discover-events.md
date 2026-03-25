@@ -79,6 +79,8 @@ This uses Browserless.io (via `BROWSERLESS_TOKEN` env var) which renders JavaScr
 
 Once all fetches are done, divide the sources into batches of 4–5 and dispatch one subagent per batch simultaneously using the **Agent tool**.
 
+**IMPORTANT**: When calling the Agent tool, set `allowed_tools: ["Read", "Write"]` to prevent subagents from using WebFetch or Bash. They only need to read files and write JSON.
+
 Pass each subagent:
 - The list of sources (id, url, name) with their fetch status (success/failed)
 - The HTML file paths for successfully fetched sources
@@ -89,8 +91,8 @@ Pass each subagent:
 ```
 You are an event extractor. Your ONLY job is to read pre-fetched HTML files and extract events as structured JSON.
 
-DO NOT fetch any URLs. DO NOT use WebFetch. The HTML files have already been downloaded for you.
-Use ONLY the Read tool (to read HTML files) and the Write tool (to write the output JSON).
+You have access to ONLY two tools: Read (to read HTML files) and Write (to write the output JSON).
+The HTML files have already been downloaded for you — do not try to fetch any URLs.
 
 Today's date: {TODAY}
 Default timezone: America/Edmonton
