@@ -291,7 +291,23 @@ Group events by category:
 
 ### 6.2: Format Discord Messages
 
-Format one message per category. Each message must be **≤ 2000 characters** (Discord limit). Split into multiple messages if needed.
+Format one message per category. Each message must be **≤ 1950 characters** (Discord limit, leave buffer). Split into multiple messages if needed.
+
+**Google Calendar quick-add URL format**:
+```
+https://calendar.google.com/calendar/render?action=TEMPLATE&text=TITLE&dates=START/END&details=DESCRIPTION&location=VENUE
+```
+- `text`: URL-encode the event title
+- `dates`: `YYYYMMDDTHHMMSS/YYYYMMDDTHHMMSS` (local time, no Z suffix — let Google handle timezone)
+  - If no time known: use `YYYYMMDD/YYYYMMDD` (all-day format)
+  - End time: use start + 2 hours if no end time available
+- `details`: URL-encode the event_url
+- `location`: URL-encode the venue name
+
+Generate **up to 2 calendar links per event**:
+
+1. **Event calendar link** (always): `📆 Add event` — links to the event date/time
+2. **Ticket sale reminder** (only if `ticket_sale_date` is set): `🔔 Tickets on sale [date]` — links to the ticket sale date as an all-day event, with title prefixed "🎫 Tickets on sale: [event title]"
 
 **Format**:
 ```
@@ -299,14 +315,14 @@ Format one message per category. Each message must be **≤ 2000 characters** (D
 
 **Jazz Night with Sarah Vaughan Tribute**
 📅 Fri Oct 15 at 8:00 PM · 📍 Blue Note Jazz Club · 💰 $25-$35
-🎫 <ticket_url> · 🔗 <event_url>
+🔗 <event_url> · 📆 Add event
 
 **The National - Live**
 📅 Sat Oct 22 at 8:00 PM · 📍 MacEwan Ballroom · 💰 $50-$75
-🎫 <ticket_url>
+🎫 <ticket_url> · 🔗 <event_url> · 📆 Add event · 🔔 Tickets on sale Apr 1
 ```
 
-Only include fields that are available (skip null fields).
+Only include fields that are available (skip null fields). Always include 📆. Only include 🔔 if ticket_sale_date is known.
 
 ---
 
