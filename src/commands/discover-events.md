@@ -367,15 +367,13 @@ Only include fields that are available (skip null fields). Always include 📆. 
 Use the Bash tool to POST each category message to the Discord webhook:
 
 ```bash
-node -e "
-const url = process.env.DISCORD_WEBHOOK_URL;
-fetch(url, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ content: '<message>' })
-}).then(r => console.log('Status:', r.status));
-"
+curl -s -o /dev/null -w "%{http_code}" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "<message>"}' \
+  "$DISCORD_WEBHOOK_URL"
 ```
+
+Use `curl` (not Node.js fetch) — it handles network better in this environment. A response of `204` means success.
 
 Post a header message first:
 ```
@@ -403,7 +401,7 @@ git config user.email "eventfinder-bot@users.noreply.github.com"
 git config user.name "EventFinder Bot"
 git add data/eventfinder.db
 git commit -m "chore: update event database [skip ci]"
-git push
+git pull --rebase origin main && git push origin HEAD:main
 ```
 
 **If Discord post failed**: Do NOT mark as sent (events stay 'pending' for retry next run). Still commit the DB to save any newly discovered events.
