@@ -59,39 +59,44 @@ Feed extracted events into the same deduplication and preference matching pipeli
 
 ## Step 3: Fetch and Extract Events (Parallel Subagents)
 
-Dispatch sources to subagents in **batches of 4–5** to avoid filling the main context with raw HTML. Each subagent fetches its assigned URLs and returns structured JSON events.
+The main agent fetches all pages via Bash (using Browserless.io), writes HTML to temp files, then dispatches subagents in parallel to extract events from the pre-fetched content.
 
-### 3.1: Split Sources into Batches
+### 3.1: Fetch All Pages (Main Agent via Bash)
 
-Divide the source list from Step 2 into groups of 4–5 sources. For 20 sources that's 4–5 batches.
+For each source, fetch the page and save to a temp file:
 
-### 3.2: Dispatch Subagents in Parallel
+```bash
+node scripts/fetch-page.js "SOURCE_URL" > /tmp/eventfinder-page-SOURCE_ID.html 2>/tmp/eventfinder-page-SOURCE_ID.err
+echo "Exit: $?"
+```
 
-Use the **Agent tool** to spawn one subagent per batch simultaneously. Pass each subagent:
-- The list of sources to fetch (id, url, name, description)
+Run these sequentially (one per source). If exit code is non-zero, the fetch failed — check the .err file for the error message.
+
+### 3.2: Split into Batches and Dispatch Subagents in Parallel
+
+After fetching, divide sources into groups of 4–5. Use the **Agent tool** to spawn one subagent per batch simultaneously. Pass each subagent:
+- The list of sources (id, url, name) with their pre-fetched HTML file paths
 - The event extraction instructions below
 - Today's date (for relative date parsing)
 - The output file path to write results to (e.g. `/tmp/eventfinder-batch-1.json`)
 
 **Subagent prompt template**:
 ```
-You are an event scraper. Fetch each URL below using Browserless.io and extract events as JSON.
+You are an event extractor. Read pre-fetched HTML files and extract events as JSON.
 
 Today's date: {TODAY}
 Default timezone: America/Edmonton
 
-Sources to fetch:
-{SOURCE_LIST}
+Sources to process:
+{SOURCE_LIST_WITH_FILE_PATHS}
 
 Output file: {OUTPUT_FILE}
 
 For each source:
-1. Fetch the URL using the Bash tool with this exact command (replace URL):
-   node scripts/fetch-page.js "URL_HERE"
-   This uses Browserless.io for real browser rendering and bot bypass.
-   Do NOT use WebFetch — it gets blocked by bot protection on most sites.
-2. Extract all events from the returned HTML/text content
-3. If the page returns minimal/empty content, mark as js_heavy=true
+1. Read the pre-fetched HTML file using the Read tool (e.g. /tmp/eventfinder-page-1.html)
+2. If the file doesn't exist or is empty, mark success=false
+3. Extract all events from the HTML content
+4. If the page content is minimal/empty (JS-heavy), mark js_heavy=true
 
 Build a JSON object:
 {
