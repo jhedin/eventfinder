@@ -59,34 +59,26 @@ Feed extracted events into the same deduplication and preference matching pipeli
 
 ## Step 3: Fetch and Extract Events
 
-**YOU (the main agent) must fetch all pages yourself using Bash before dispatching any subagents. Do NOT dispatch subagents to fetch URLs — WebFetch is blocked by Cloudflare on all these sites.**
+### 3.1: Fetch All Sources
 
-### 3.1: Fetch All Sources via Bash (YOU do this, not subagents)
-
-Run the Bash tool for **each source** from Step 2. Execute these one at a time:
+Run this single Bash command to fetch all active sources:
 
 ```bash
-node scripts/fetch-page.js "SOURCE_URL" > /tmp/eventfinder-page-SOURCE_ID.html 2>/tmp/eventfinder-page-SOURCE_ID.err && echo "OK" || echo "FAILED"
+node scripts/scrape-all.js
 ```
 
-For example, for source id=1 at https://example.com/events:
-```bash
-node scripts/fetch-page.js "https://example.com/events" > /tmp/eventfinder-page-1.html 2>/tmp/eventfinder-page-1.err && echo "OK" || echo "FAILED"
-```
+This script reads all active sources from the DB, fetches each using Browserless.io (via `BROWSERLESS_TOKEN` env var, which renders JavaScript and bypasses bot protection), and falls back to plain fetch if the token is not set. It writes one HTML file per source to `/tmp/eventfinder-page-{id}.html` and a manifest to `/tmp/eventfinder-fetch-manifest.json`.
 
-After all fetches complete, proceed to 3.2.
-
-This uses Browserless.io (via `BROWSERLESS_TOKEN` env var) which renders JavaScript and bypasses bot protection.
+After it completes, proceed to 3.2.
 
 ### 3.2: Dispatch Extraction Subagents in Parallel
 
-Once all fetches are done, divide the sources into batches of 4–5 and dispatch one subagent per batch simultaneously using the **Agent tool**.
+Read `/tmp/eventfinder-fetch-manifest.json` to get the fetch results. Divide the sources into batches of 4–5 and dispatch one subagent per batch simultaneously using the **Agent tool**.
 
 **IMPORTANT**: When calling the Agent tool, set `allowed_tools: ["Read", "Write"]` to prevent subagents from using WebFetch or Bash. They only need to read files and write JSON.
 
 Pass each subagent:
-- The list of sources (id, url, name) with their fetch status (success/failed)
-- The HTML file paths for successfully fetched sources
+- The list of sources (id, url, name) with their fetch status (success/failed) and html_file paths — taken directly from the manifest
 - Today's date (for relative date parsing)
 - The output file path to write results to (e.g. `/tmp/eventfinder-batch-1.json`)
 
