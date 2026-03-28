@@ -154,91 +154,27 @@ Wait for all subagents to complete. Each subagent has written its results to `/t
 node scripts/import-batch-results.js
 ```
 
-This script:
-- Reads all `/tmp/eventfinder-batch-*.json` files
-- Deduplicates events (hash check)
-- Inserts new events into the DB
-- Updates source status (last_checked_at, consecutive_failures, etc.)
-- Outputs a summary of what was inserted vs skipped
+This script handles everything: deduplication, DB insertion, and source status updates. **Do not write your own insertion script** — use this one. If it reports "No batch files found", check that the subagents actually wrote their output files before proceeding.
 
-After running, the batch files are no longer needed.
-
-Note any `js_heavy: true` sources reported in the import script output for the Step 9 summary (future Browserless.io upgrade).
+Note any `js_heavy: true` sources reported in the output for the Step 9 summary.
 
 ---
 
-## Step 4: Check for Duplicates
+## Step 4: Assess Unreviewed Events
 
-The import script (Step 3.3) handles hash-based deduplication automatically. After it runs, review its output to understand what was new vs. skipped.
-
-For the **preference matching** step (Step 5), query for events that were inserted in this run:
+`import-batch-results.js` (Step 3.3) already inserted all new events into the DB with deduplication. Now query for events that have not yet been assessed for relevance (no row in `sent_events`):
 
 ```bash
-node scripts/db-query.js "SELECT e.id, e.title, e.venue, e.description, e.price, e.event_url, e.ticket_url, e.source_id FROM events e WHERE e.id NOT IN (SELECT event_id FROM sent_events)"
+node scripts/db-query.js "SELECT e.id, e.title, e.venue, e.description, e.price, e.event_url, e.ticket_url, e.source_id FROM events e WHERE e.id NOT IN (SELECT DISTINCT event_id FROM sent_events)"
 ```
 
-These are the events not yet assessed for relevance.
-
-> **Note**: The import script also handles fuzzy duplicate detection via the existing event_hash column. If you need to manually check for a specific duplicate:
-
-### 4.1: Generate Event Hash
-
-Create a normalized hash from title + venue:
-```
-hash = sha256(normalize(title) + normalize(venue))
-```
-
-Normalization:
-- Lowercase
-- Remove punctuation
-- Remove extra whitespace
-- Remove accents
-
-Example:
-```
-"Jazz Night!" at "Blue Note Café"
-→ "jazznight" + "bluenotecafe"
-→ hash("jazzniteblunotecafe")
-```
-
-### 4.2: Check Exact Match
-
-```bash
-node scripts/db-query.js "SELECT id, title, venue FROM events WHERE event_hash = ?" '"<hash>"'
-```
-
-If found: **Skip this event** (already in database)
-
-### 4.3: Fuzzy Duplicate Check
-
-If no exact match, query for similar events:
-
-```bash
-node scripts/db-query.js "SELECT id, title, venue, event_url FROM events e JOIN event_instances ei ON e.id = ei.event_id WHERE e.venue LIKE ? AND ei.instance_date BETWEEN ? AND ? LIMIT 5" '"%<venue_keyword>%"' '"<date_minus_3>"' '"<date_plus_3>"'
-```
-
-**Ask yourself**: Is this new event the same as any of these existing events?
-
-Example reasoning:
-```
-New: "Christmas Afternoon Tea" at "Lougheed House" on Nov 30
-Existing: "Christmas Tea" at "Lougheed House" on Nov 30
-
-Decision: YES, same event (just slightly different wording)
-Action: Skip
-```
-
-If it's a duplicate: **Skip this event**
-
-If it's genuinely new: **Continue to relevance matching**
+These are the events to assess. **Do not re-insert them** — they are already in the DB.
 
 ---
 
 ## Step 5: Match to User Preferences
 
-For each **new, non-duplicate event**, determine if it matches user interests.
-
-Use your judgment based on `data/user-preferences.md`:
+For each unreviewed event from Step 4, decide if it matches user interests based on `data/user-preferences.md`.
 
 **Consider**:
 - Does the event type match their interests? (jazz music, pottery class, etc.)
@@ -251,43 +187,14 @@ Use your judgment based on `data/user-preferences.md`:
 - "Blue Note" (jazz club) implies jazz music
 - "Workshop" at craft store implies hands-on class
 
-**Output your decision**:
-```json
-{
-  "matches": true,
-  "reason": "User is interested in jazz music, and this is a jazz performance at a well-known jazz venue"
-}
-```
+For each event, insert one row into `sent_events` to record your decision:
 
-or
-
-```json
-{
-  "matches": false,
-  "reason": "User excluded sports events, and this is a hockey game"
-}
-```
-
-### 5.1: Store in Database
-
-**Insert event:**
-```bash
-node scripts/db-query.js "INSERT INTO events (event_hash, title, venue, description, price, event_url, ticket_url, image_url, minimum_age, source_id, source_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id" '"<hash>"' '"<title>"' '"<venue>"' '"<description>"' '"<price>"' '"<event_url>"' '"<ticket_url>"' '"<image_url>"' '<minimum_age_or_null>' '<source_id>' '"<source_url>"'
-```
-
-**Insert event instances** (one call per instance):
-```bash
-node scripts/db-query.js "INSERT INTO event_instances (event_id, instance_date, instance_time, end_date, timezone, ticket_sale_date, ticket_sale_time) VALUES (?, ?, ?, ?, ?, ?, ?)" '<event_id>' '"<date>"' '"<time_or_null>"' '<end_date_or_null>' '"America/Edmonton"' '<ticket_sale_date_or_null>' '<ticket_sale_time_or_null>'
-```
-
-**Mark status based on relevance:**
-
-If **matches = true**:
+If **matches**:
 ```bash
 node scripts/db-query.js "INSERT INTO sent_events (event_id, instance_id, status, reason) SELECT ?, id, 'pending', ? FROM event_instances WHERE event_id = ?" '<event_id>' '"<reason>"' '<event_id>'
 ```
 
-If **matches = false**:
+If **does not match**:
 ```bash
 node scripts/db-query.js "INSERT INTO sent_events (event_id, instance_id, status, reason) SELECT ?, id, 'excluded', ? FROM event_instances WHERE event_id = ?" '<event_id>' '"<reason>"' '<event_id>'
 ```
@@ -359,7 +266,7 @@ Only include fields that are available (skip null fields). Always include 📆. 
 
 ## Step 7: Post to Discord
 
-Use the Bash tool to POST each category message to the Discord webhook:
+Use the Bash tool to POST each category message to the Discord webhook using `curl`. **Always use curl — do not use Node.js fetch, which times out in this environment.**
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}" \
@@ -368,7 +275,7 @@ curl -s -o /dev/null -w "%{http_code}" \
   "$DISCORD_WEBHOOK_URL"
 ```
 
-Use `curl` (not Node.js fetch) — it handles network better in this environment. A response of `204` means success.
+A response of `204` means success. If you get a non-204 response or an error, retry once before giving up.
 
 Post a header message first:
 ```
