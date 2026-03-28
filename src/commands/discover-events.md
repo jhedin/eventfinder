@@ -162,42 +162,41 @@ Note any `js_heavy: true` sources reported in the output for the Step 9 summary.
 
 ## Step 4: Assess Unreviewed Events
 
-`import-batch-results.js` (Step 3.3) already inserted all new events into the DB with deduplication. Now query for events that have not yet been assessed for relevance (no row in `sent_events`):
+`import-batch-results.js` (Step 3.3) already inserted all new events. Now query for events not yet assessed:
 
 ```bash
-node scripts/db-query.js "SELECT e.id, e.title, e.venue, e.description, e.price, e.event_url, e.ticket_url, e.source_id FROM events e WHERE e.id NOT IN (SELECT DISTINCT event_id FROM sent_events)"
+node scripts/db-query.js "SELECT e.id, e.title, e.venue, e.description, e.price, e.event_url, e.source_id FROM events e WHERE e.id NOT IN (SELECT DISTINCT event_id FROM sent_events)"
 ```
-
-These are the events to assess. **Do not re-insert them** — they are already in the DB.
 
 ---
 
 ## Step 5: Match to User Preferences
 
-For each unreviewed event from Step 4, decide if it matches user interests based on `data/user-preferences.md`.
+For each unreviewed event, decide if it matches user interests based on `data/user-preferences.md`.
 
-**Consider**:
-- Does the event type match their interests? (jazz music, pottery class, etc.)
-- Is the venue type relevant? (jazz club, gallery, workshop space)
-- Does it align with their preferences? (time of day, age restrictions)
-- Is it explicitly excluded? (sports, nightclubs, late events)
+**Consider**: event type, venue, timing, price, exclusions. When in doubt, include it.
 
 **Contextual understanding**:
-- "The National" (band) vs "National Holiday" (not a band)
-- "Blue Note" (jazz club) implies jazz music
-- "Workshop" at craft store implies hands-on class
+- "The National" = indie rock band (not a national holiday)
+- "Blue Note" / "jazz club" = jazz music
+- Workshop at craft store = hands-on class
 
-For each event, insert one row into `sent_events` to record your decision:
+For each event, record your decision with:
 
-If **matches**:
 ```bash
-node scripts/db-query.js "INSERT INTO sent_events (event_id, instance_id, status, reason) SELECT ?, id, 'pending', ? FROM event_instances WHERE event_id = ?" '<event_id>' '"<reason>"' '<event_id>'
+node scripts/record-relevance.js <event_id> <status> "<reason>"
 ```
 
-If **does not match**:
+- `status`: `pending` (matches) or `excluded` (does not match)
+- `reason`: one sentence explanation
+
+Examples:
 ```bash
-node scripts/db-query.js "INSERT INTO sent_events (event_id, instance_id, status, reason) SELECT ?, id, 'excluded', ? FROM event_instances WHERE event_id = ?" '<event_id>' '"<reason>"' '<event_id>'
+node scripts/record-relevance.js 42 pending "Jazz quartet at intimate venue — matches jazz interest"
+node scripts/record-relevance.js 43 excluded "Heavy metal festival — explicitly excluded"
 ```
+
+This script is safe to re-run — it skips events already assessed.
 
 ---
 
