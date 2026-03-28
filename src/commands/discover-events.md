@@ -395,8 +395,9 @@ Then commit the updated database back to GitHub:
 git config user.email "eventfinder-bot@users.noreply.github.com"
 git config user.name "EventFinder Bot"
 git add data/eventfinder.db
-git commit -m "chore: update event database [skip ci]"
-git pull --rebase origin main && git push origin HEAD:main
+git commit -m "chore: update event database with $(date +%Y-%m-%d) discovery run [skip ci]"
+git pull origin main --no-rebase -X ours
+git push origin HEAD:main
 ```
 
 **If Discord post failed**: Do NOT mark as sent (events stay 'pending' for retry next run). Still commit the DB to save any newly discovered events.
