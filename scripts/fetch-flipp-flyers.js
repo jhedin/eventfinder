@@ -7,6 +7,14 @@
 // Output: /tmp/eventfinder-flyer-batch-flipp.json
 
 import { writeFileSync } from 'fs';
+import { setGlobalDispatcher, ProxyAgent } from 'undici';
+
+// Honour standard proxy env vars (Node's built-in fetch/undici ignores them by default)
+const proxyUrl = process.env.https_proxy || process.env.HTTPS_PROXY ||
+                 process.env.http_proxy  || process.env.HTTP_PROXY;
+if (proxyUrl) {
+  setGlobalDispatcher(new ProxyAgent(proxyUrl));
+}
 
 const POSTAL_CODE = 'T3C0W1';
 const OUTPUT_FILE = '/tmp/eventfinder-flyer-batch-flipp.json';
@@ -36,9 +44,10 @@ async function fetchJSON(url) {
 
 async function main() {
   console.log(`Fetching flyers for postal code ${POSTAL_CODE}...`);
-  const allFlyers = await fetchJSON(
+  const flyersResp = await fetchJSON(
     `https://backflipp.wishabi.com/flipp/flyers?locale=en-ca&postal_code=${POSTAL_CODE}`
   );
+  const allFlyers = Array.isArray(flyersResp) ? flyersResp : (flyersResp.flyers || []);
 
   const merchantIds = Object.keys(MERCHANTS).map(Number);
   const ourFlyers = allFlyers.filter(f => merchantIds.includes(f.merchant_id));
