@@ -206,6 +206,42 @@ WHERE se.status = 'sent'
 ORDER BY ei.instance_date;
 
 -- =============================================================================
+-- FULL-TEXT SEARCH (FTS5)
+-- =============================================================================
+-- Content table referencing events; triggers keep index in sync.
+-- Porter stemmer: "jazz" matches "jazzy", "perform" matches "performance", etc.
+
+CREATE VIRTUAL TABLE events_fts USING fts5(
+  title,
+  description,
+  venue,
+  content='events',
+  content_rowid='id',
+  tokenize='porter unicode61'
+);
+
+-- Populate index from existing rows (no-op on fresh DB)
+INSERT INTO events_fts(events_fts) VALUES('rebuild');
+
+-- Keep index in sync with events table
+CREATE TRIGGER events_ai AFTER INSERT ON events BEGIN
+  INSERT INTO events_fts(rowid, title, description, venue)
+  VALUES (new.id, new.title, new.description, new.venue);
+END;
+
+CREATE TRIGGER events_ad AFTER DELETE ON events BEGIN
+  INSERT INTO events_fts(events_fts, rowid, title, description, venue)
+  VALUES ('delete', old.id, old.title, old.description, old.venue);
+END;
+
+CREATE TRIGGER events_au AFTER UPDATE ON events BEGIN
+  INSERT INTO events_fts(events_fts, rowid, title, description, venue)
+  VALUES ('delete', old.id, old.title, old.description, old.venue);
+  INSERT INTO events_fts(rowid, title, description, venue)
+  VALUES (new.id, new.title, new.description, new.venue);
+END;
+
+-- =============================================================================
 -- INITIAL DATA
 -- =============================================================================
 
