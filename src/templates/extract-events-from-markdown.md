@@ -122,6 +122,13 @@ Look for:
 
 If no venue specified, set to `null` or try to infer from context.
 
+**Use the shortest, most common form of the venue name** — this is critical for deduplication:
+- Use `"Studio Bell"` not `"Studio Bell, National Music Centre"` or `"Studio Bell (National Music Centre)"`
+- Use `"Jack Singer Concert Hall"` not `"Werklund Centre - Jack Singer Concert Hall"`
+- Use `"Engineered Air Theatre"` not `"Werklund Centre - Engineered Air Theatre"`
+- Use the primary building/room name, drop parent organization suffixes
+- Be consistent: if you've seen the venue before in the content, use the same form
+
 ### 5. Extract URLs
 
 **Event URL**: Link to "More Info", "Details", or the event page itself
