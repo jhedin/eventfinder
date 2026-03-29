@@ -24,7 +24,7 @@ Keep these preferences in mind throughout the workflow.
 Run the following query using `node scripts/db-query.js`:
 
 ```bash
-node scripts/db-query.js "SELECT id, url, name, description FROM sources WHERE active = 1 ORDER BY last_checked_at ASC"
+node scripts/db-query.js "SELECT id, url, name, description FROM sources WHERE active = 1 AND type = 'event' ORDER BY last_checked_at ASC"
 ```
 
 This gives you the websites to check for events.

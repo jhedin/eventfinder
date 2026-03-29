@@ -2,9 +2,9 @@
 // Fetches all active sources from the DB using Browserless.io (or plain curl fallback).
 // Writes HTML files to /tmp and a manifest JSON for extraction subagents.
 //
-// Usage: node scripts/scrape-all.js
-// Output: /tmp/eventfinder-fetch-manifest.json
-//         /tmp/eventfinder-page-{id}.html  (one per successful source)
+// Usage: node scripts/scrape-all.js [--type=event|flyer]
+// Output: /tmp/eventfinder-fetch-manifest.json  (or eventfinder-flyer-fetch-manifest.json)
+//         /tmp/eventfinder-page-{id}.html        (or eventfinder-flyer-page-{id}.html)
 
 import { createRequire } from 'module';
 import { writeFileSync } from 'fs';
@@ -45,16 +45,19 @@ function fetchPlain(targetUrl) {
   ], { encoding: 'utf8', maxBuffer: 20 * 1024 * 1024 });
 }
 
+const sourceType = process.argv.find(a => a.startsWith('--type='))?.split('=')[1] || 'event';
+const filePrefix = sourceType === 'flyer' ? 'eventfinder-flyer' : 'eventfinder';
+
 const db = new Database(DB_PATH);
-const sources = db.prepare('SELECT id, url, name FROM sources WHERE active = 1 ORDER BY last_checked_at ASC').all();
+const sources = db.prepare('SELECT id, url, name FROM sources WHERE active = 1 AND type = ? ORDER BY last_checked_at ASC').all(sourceType);
 db.close();
 
-console.log(`Fetching ${sources.length} active sources (Browserless.io: ${token ? 'YES' : 'NO — plain curl fallback'})...\n`);
+console.log(`Fetching ${sources.length} active ${sourceType} sources (Browserless.io: ${token ? 'YES' : 'NO — plain curl fallback'})...\n`);
 
 const results = [];
 
 for (const source of sources) {
-  const htmlFile = `/tmp/eventfinder-page-${source.id}.html`;
+  const htmlFile = `/tmp/${filePrefix}-page-${source.id}.html`;
   process.stdout.write(`[${source.id}] ${source.url} ... `);
   try {
     const html = token ? fetchWithBrowserless(source.url) : fetchPlain(source.url);
@@ -67,10 +70,11 @@ for (const source of sources) {
   }
 }
 
-const manifest = { fetched_at: new Date().toISOString(), sources: results };
-writeFileSync('/tmp/eventfinder-fetch-manifest.json', JSON.stringify(manifest, null, 2));
+const manifest = { fetched_at: new Date().toISOString(), type: sourceType, sources: results };
+const manifestPath = `/tmp/${filePrefix}-fetch-manifest.json`;
+writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
 const succeeded = results.filter(r => r.success).length;
 const failed = results.filter(r => !r.success).length;
 console.log(`\nDone: ${succeeded} succeeded, ${failed} failed`);
-console.log('Manifest written to /tmp/eventfinder-fetch-manifest.json');
+console.log(`Manifest written to ${manifestPath}`);
