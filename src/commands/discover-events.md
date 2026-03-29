@@ -181,22 +181,25 @@ For each unreviewed event, decide if it matches user interests based on `data/us
 - "Blue Note" / "jazz club" = jazz music
 - Workshop at craft store = hands-on class
 
-For each event, record your decision with:
+After assessing ALL events, record every decision in **one batch command**:
 
 ```bash
-node scripts/record-relevance.js <event_id> <status> "<reason>"
+node scripts/record-relevance-batch.js /tmp/relevance-decisions.json
+```
+
+Write `/tmp/relevance-decisions.json` first (using the Write tool), then run the command. Format:
+
+```json
+[
+  {"event_id": 42, "status": "pending", "reason": "Jazz quartet at intimate venue — matches jazz interest"},
+  {"event_id": 43, "status": "excluded", "reason": "Heavy metal festival — explicitly excluded"}
+]
 ```
 
 - `status`: `pending` (matches) or `excluded` (does not match)
 - `reason`: one sentence explanation
 
-Examples:
-```bash
-node scripts/record-relevance.js 42 pending "Jazz quartet at intimate venue — matches jazz interest"
-node scripts/record-relevance.js 43 excluded "Heavy metal festival — explicitly excluded"
-```
-
-This script is safe to re-run — it skips events already assessed.
+This script is safe to re-run — it skips events already assessed. **Do not run record-relevance.js once per event** — always use the batch script.
 
 ---
 
