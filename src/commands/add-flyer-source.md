@@ -1,70 +1,27 @@
-# Add Flyer Source Command
+# Add Flyer Source
 
-Add a grocery store's flyer page to your monitoring list.
+Add a grocery store's flyer page to the monitoring list.
 
 ## Workflow
 
-1. **Prompt for URL** if not provided
-2. **Check for duplicates:**
-   - Query `SELECT id, name FROM sources WHERE url = ?`
-   - If found, report "This source is already being monitored" and stop
-3. **Test the URL:**
-   - Fetch the page using `node scripts/fetch-page.js <url>`
-   - Attempt to extract deals using the flyer extraction template (`src/templates/extract-flyers-from-markdown.md`)
-4. **Show preview:**
-   - Display store name (auto-detected)
-   - Show flyer validity period if found
-   - Show number of deals found
-   - Show sample deals (first 5)
-5. **Confirm to add:**
-   - Ask user if they want to add this source
-   - Let them adjust the name if the auto-detected one is wrong
-6. **Add to database:**
+1. **Get URL** from argument or prompt
+2. **Check duplicates**: `SELECT id, name FROM sources WHERE url = ?`
+3. **Test the URL**: Fetch with `node scripts/fetch-page.js <url>`, extract sample deals using `src/templates/extract-flyers-from-markdown.md`
+4. **Preview**: Show store name, flyer period, sample deals (first 5)
+5. **Confirm** with user, let them adjust the name
+6. **Insert**:
    ```bash
-   node scripts/db-query.js "INSERT INTO sources (url, name, description, active, type) VALUES (?, ?, ?, 1, 'flyer') RETURNING id" '"<url>"' '"<name>"' '"<description>"'
+   node scripts/db-query.js "INSERT INTO sources (url, name, description, active, type) VALUES (?, ?, ?, 1, 'flyer') RETURNING id"
    ```
 
 ## Usage
 
-With URL:
 ```
 /add-flyer-source https://www.realcanadiansuperstore.ca/print-flyer
-```
-
-Interactive:
-```
 /add-flyer-source
-```
-(Will prompt for URL)
-
-## Output
-
-```
-Testing: https://www.realcanadiansuperstore.ca/print-flyer
-Fetching page...
-Extracting deals...
-
-✓ Found 42 deals
-
-Store: Real Canadian Superstore
-Flyer valid: Mar 27 - Apr 2, 2026
-
-Sample deals:
-  🥩 Boneless Chicken Breast — $4.99/lb (reg $7.99)
-  🥬 Strawberries 1lb — 2 for $5
-  🧀 Marble Cheese 400g — $5.49 (reg $7.99)
-  🥩 Atlantic Salmon Fillets — $9.99/lb (reg $13.99)
-  🍞 Wonder Bread — $2.49
-
-Add this source? (yes/no): yes
-
-✓ Added to sources (type: flyer)
-  Name: Real Canadian Superstore
-  ID: 24
 ```
 
 ## Notes
 
-- This inserts with `type = 'flyer'` so the source won't appear in event discovery
-- The `/discover-flyers` command only queries sources where `type = 'flyer'`
-- If the page is JS-heavy and returns little content, note this in the output and suggest trying the print-friendly or text version of the flyer
+- Inserts with `type = 'flyer'` — won't appear in event discovery
+- For stores on Flipp, consider adding the Flipp merchant ID to `scripts/fetch-flipp-flyers.js` instead

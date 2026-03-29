@@ -1,165 +1,86 @@
 # Discover Flyers
 
-**You are FlyerFinder.** Run the complete flyer discovery workflow: fetch deals from the Flipp API and Gmail newsletters, then post digest to Discord.
+Run the flyer deal discovery workflow: fetch deals from Flipp API, import into DB, post digest to Discord.
 
 ---
 
-## Step 1: Install Dependencies
+## Step 1: Fetch from Flipp API
 
 ```bash
 npm install
-```
-
----
-
-## Step 2: Fetch Flyer Deals from Flipp API (Primary Source)
-
-Run the Flipp fetch script:
-
-```bash
 node scripts/fetch-flipp-flyers.js
 ```
 
-This calls the public Flipp API (`backflipp.wishabi.com`) which returns structured JSON for all configured merchants in the Calgary area. It writes results to `/tmp/eventfinder-flyer-batch-flipp.json`.
-
-The script is pre-configured with these merchant IDs:
-- 208: Shoppers Drug Mart
-- 228: London Drugs
-- 2051: Calgary Co-op
-- 2072: Sobeys
-- 2126: Safeway
-- 2271: Real Canadian Superstore
-- 2332: No Frills
-- 2471: Canadian Tire
-- 2596: Costco
-- 2702: Wholesale Club
-- 3407: Co-op Wine Spirits Beer
-- 3656: Sobeys & Safeway Liquor
-- 6373: T&T Supermarket
-
-No authentication, no browser, no scraping — just structured JSON.
+Fetches structured JSON for all 13 configured merchants via the public Flipp API. Writes `/tmp/eventfinder-flyer-batch-flipp.json`.
 
 ---
 
-## Step 3: Read Gmail Flyer Newsletters (Supplemental)
+## Step 2: Read Gmail Flyer Newsletters (if available)
 
-**If the Gmail connector is available**, read unread flyer newsletter emails for any deals not covered by Flipp:
+If the Gmail connector is available:
 
-1. Search for unread flyer emails: `to:j.hedin.open.claw+flyers@gmail.com is:unread newer_than:7d`
-2. For each email:
-   - Read the plain text / HTML body
-   - Identify the store name from the sender or subject line
-   - Pass the body through deal extraction (use the template in `src/templates/extract-flyers-from-markdown.md`)
-   - Write results to `/tmp/eventfinder-flyer-batch-gmail.json` in the same format
-3. Mark each email as read after processing
+1. Search: `to:j.hedin.open.claw+flyers@gmail.com is:unread newer_than:7d`
+2. For each email, extract deals using `src/templates/extract-flyers-from-markdown.md`
+3. Write results to `/tmp/eventfinder-flyer-batch-gmail.json` (same format as Flipp output)
+4. Mark each email as read
 
-**If Gmail connector is not available**: Skip this step and continue.
+Skip if Gmail connector is not available.
 
 ---
 
-## Step 4: Import Results
-
-Run the flyer import script:
+## Step 3: Import Results
 
 ```bash
 node scripts/import-flyer-results.js
 ```
 
-This reads all `/tmp/eventfinder-flyer-batch-*.json` files (from both Flipp and Gmail), deduplicates them, and imports into the `flyer_items` table. Each new item gets a `pending` entry in `sent_flyer_items`.
-
-Note the import summary (new items, duplicates, failures).
+Reads all `/tmp/eventfinder-flyer-batch-*.json` files, deduplicates, and inserts into `flyer_items` / `sent_flyer_items` tables.
 
 ---
 
-## Step 5: Generate Discord Digest
+## Step 4: Generate and Post Discord Digest
 
-Query for all pending (unsent) flyer items:
+Query pending items:
 
 ```bash
-node scripts/db-query.js "SELECT fi.*, s.name as store_name, sfi.id as sent_id FROM flyer_items fi JOIN sources s ON s.id = fi.source_id JOIN sent_flyer_items sfi ON sfi.flyer_item_id = fi.id WHERE sfi.status = 'pending' ORDER BY s.name, fi.category, fi.item_name"
+node scripts/db-query.js "SELECT fi.*, s.name as store_name, sfi.id as sent_id FROM flyer_items fi JOIN sources s ON s.id = fi.source_id JOIN sent_flyer_items sfi ON sfi.flyer_item_id = fi.id WHERE sfi.status = 'pending' ORDER BY fi.category, fi.item_name, s.name"
 ```
 
-If **no pending items**: Skip to Step 8 and report "No new flyer deals to send."
+If no pending items, skip to Step 5.
 
-### 5.1: Group by Category, then Store
+### Formatting
 
-Organize deals **by category first**, with store names as tags on each item. This makes it easy to compare prices across stores.
+Group by **category first**, with `@ Store` tags on each item for cross-store comparison.
 
-1. Group all items by `category`
-2. Within each category, sort by `item_name` to cluster similar products together
-3. Include the store name on each item line so readers can compare
+Category emojis: 🥩 Meat & Seafood, 🥬 Produce, 🧀 Dairy, 🍞 Bakery, 🧊 Frozen, 🥫 Pantry, 🥤 Beverages
 
-### 5.2: Format Discord Messages
-
-Each message must be **<= 2000 characters** (Discord limit). Split across multiple messages if needed — one or more messages per category.
-
-**Category emoji map**:
-- Produce → 🥬
-- Meat & Seafood → 🥩
-- Dairy → 🧀
-- Bakery → 🍞
-- Frozen → 🧊
-- Pantry → 🥫
-- Beverages → 🥤
-
-**Header message**:
 ```
 🛒 **Flyer Deals** — {count} deals from {store_count} stores · {date}
-```
 
-**Per-category format**:
-```
 🥩 **Meat & Seafood**
 • Boneless Chicken Breast — **$4.99/lb** @ Safeway ~~$7.99~~
 • Boneless Chicken Breast — **$5.49/lb** @ Co-op
 • Ground Beef — **$3.99/lb** @ No Frills ~~$5.99~~
-• Salmon Fillets — **$9.99/lb** @ Superstore ~~$13.99~~
 
 🥬 **Produce**
 • Strawberries 1lb — **2 for $5** @ Superstore
 • Avocados — **$0.99 ea** @ Safeway ~~$1.49~~
 ```
 
-- Show `~~regular_price~~` strikethrough only if regular_price is available
-- Include brand in parentheses if present: `• Chicken Breast (Maple Leaf) — **$4.99/lb** @ Safeway`
-- **@ Store** goes after the price/strikethrough
-- If a category has many items, split into multiple messages
+- Strikethrough `~~regular_price~~` only when available
+- Brand in parentheses if present: `• Chicken Breast (Maple Leaf) — **$4.99/lb** @ Safeway`
+- Split messages at 2000 chars (Discord limit)
+
+### Posting
+
+POST to `DISCORD_FLYERS_WEBHOOK_URL`. If not set, skip with a warning.
 
 ---
 
-## Step 6: Post to Discord
-
-Use the Bash tool to POST each message to the Discord flyers webhook:
-
-```bash
-node -e "
-const url = process.env.DISCORD_FLYERS_WEBHOOK_URL;
-if (!url) { console.log('WARNING: DISCORD_FLYERS_WEBHOOK_URL not set, skipping'); process.exit(0); }
-fetch(url, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ content: \`<message>\` })
-}).then(r => console.log('Status:', r.status));
-"
-```
-
-Post the header message first, then one message per store (splitting if over 2000 chars).
-
-**If `DISCORD_FLYERS_WEBHOOK_URL` is not set**: Skip this step, log a warning, continue to Step 7.
-
----
-
-## Step 7: Mark Items as Sent + Save Database
-
-After successful Discord post, mark all posted items as sent:
+## Step 5: Mark Sent + Save Database
 
 ```bash
 node scripts/db-query.js "UPDATE sent_flyer_items SET status = 'sent', sent_at = CURRENT_TIMESTAMP WHERE status = 'pending'"
-```
-
-Then commit the updated database back to GitHub:
-
-```bash
 git config user.email "eventfinder-bot@users.noreply.github.com"
 git config user.name "EventFinder Bot"
 git add data/eventfinder.db
@@ -167,59 +88,28 @@ git commit -m "chore: update flyer database [skip ci]"
 git push
 ```
 
-**If Discord post failed**: Do NOT mark as sent (items stay 'pending' for retry next run). Still commit the DB to save newly discovered items.
+If Discord post failed, do NOT mark as sent. Still commit DB.
 
 ---
 
-## Step 8: Report Summary
-
-Display a summary:
+## Step 6: Report Summary
 
 ```
 ✅ Flyer Discovery Complete
-
-Flipp API: 13 merchants fetched, 850 total items
-Gmail newsletters: 3 emails processed, 45 items extracted
-
-Import:
-  New items: 420
-  Duplicates skipped: 475
-
-Discord digest: ✅ posted (420 deals across 13 stores)
-
-Database committed to GitHub: ✅
+Flipp API: {n} merchants, {n} items fetched
+Gmail: {n} emails processed (or skipped)
+Import: {n} new, {n} duplicates skipped
+Discord: ✅ posted ({n} deals across {n} stores)
+Database: ✅ committed
 ```
 
 ---
 
 ## Error Handling
 
-**If Flipp API fetch fails**:
-- Report error for that merchant
-- Continue to next merchant
+- Flipp fetch fails for a merchant → log, continue to next
+- Gmail unavailable → skip, Flipp is primary
+- Discord post fails → items stay 'pending' for retry, still commit DB
+- DB operation fails → stop (data integrity critical)
 
-**If Gmail reading fails**:
-- Log warning
-- Continue (Flipp data is the primary source)
-
-**If Discord post fails**:
-- Report error clearly
-- Items remain 'pending' (will retry next run)
-- Still commit DB to GitHub
-
-**If database operations fail**:
-- Report error and stop (data integrity critical)
-
----
-
-## Notes
-
-- **Flipp API is the primary source**: Structured JSON, no auth, no browser needed. Covers all 13 configured stores.
-- **Gmail newsletters are supplemental**: May catch deals or store-specific promotions not in Flipp.
-- **Food + drinks only**: Non-food items (tools, electronics, etc.) are filtered out by the fetch script
-- **Significant discounts**: Items without a meaningful discount are skipped
-- **Group by category**: Deals are organized by food category (Meat, Produce, Dairy, etc.) with store tags on each item for easy cross-store comparison
-- **Deduplication**: Items are hashed by name + brand + price + source + sale_end to avoid re-posting
-- **Separate channel**: Uses `DISCORD_FLYERS_WEBHOOK_URL` (not the events webhook)
-
-This is an **autonomous workflow**. Execute all steps without asking for confirmation unless you encounter an error you can't handle.
+This is an **autonomous workflow**. Execute all steps without confirmation.
