@@ -34,7 +34,7 @@ Postal code: `T3C 0W1`
 | # | Store | Flyer URL | Notes |
 |---|-------|-----------|-------|
 | 4 | London Drugs | https://www.londondrugs.com/flyer | Entire site blocked by Cloudflare. Has `/enewsletter-settings` page but couldn't access it. London Town Square location. Needs Browserless. |
-| 7 | T&T Supermarket | https://www.tntsupermarket.com/eng/store-flyer | **No flyer email found.** Flyer is postal-code based on website. Nearest Calgary stores: 999 36 St NE and 9650 Harvest Hills Blvd NE. Loblaw-owned but separate system. |
+| 7 | T&T Supermarket | https://www.flyerbox.ca/deals/calgary/tt-supermarket/ | **No email on T&T site.** Use flyerbox.ca instead — email-only signup, no CAPTCHA, Calgary-wide flyer. Nearest stores: 999 36 St NE and 9650 Harvest Hills Blvd NE. |
 | 9 | Calgary Co-op (Food) | https://www.calgarycoop.com/newsletter/ | General newsletter (HubSpot form). Fields: first name, last name, email, consent. No store selection, no CAPTCHA. Not flyer-specific but covers "special offers, new products." |
 | 10 | Co-op Wine Spirits Beer | https://www.coopwinespiritsbeer.com/flyers/ | **No flyer email found.** Uses Flipp widget (merchant 3407). No email signup anywhere on site. Midtown location. |
 
