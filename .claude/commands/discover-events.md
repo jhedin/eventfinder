@@ -4,6 +4,32 @@
 
 ---
 
+## ⚠️ Resuming a Previous Session
+
+If this session is continuing a previous interrupted run, **do not write ad-hoc scripts**. Instead:
+
+1. Check DB state to determine where the workflow left off:
+   ```bash
+   node scripts/db-query.js "SELECT COUNT(*) as events FROM events"
+   node scripts/db-query.js "SELECT COUNT(*) as pending FROM sent_events WHERE status = 'pending'"
+   ```
+2. If there are pending events → jump directly to **Step 6** (Generate Discord Digest)
+3. If there are no pending events → run the full workflow from Step 1
+
+**Always follow this workflow in full, even during recovery.** Do not skip steps or implement partial versions. The workflow already handles: Google Calendar links, proper Discord formatting, currency symbols, curl usage — do not re-implement these.
+
+---
+
+## Step 0: Install Dependencies
+
+Run this first to ensure Node dependencies are available:
+
+```bash
+npm install
+```
+
+---
+
 ## Step 1: Load User Preferences
 
 Read the file `data/user-preferences.md` to understand what events the user cares about.
@@ -47,37 +73,52 @@ Feed extracted events into the same deduplication and preference matching pipeli
 
 ---
 
-## Step 3: Fetch and Extract Events (Parallel Subagents)
+## Step 3: Fetch and Extract Events
 
-Dispatch sources to subagents in **batches of 4–5** to avoid filling the main context with raw HTML. Each subagent fetches its assigned URLs and returns structured JSON events.
+### 3.1: Fetch All Sources
 
-### 3.1: Split Sources into Batches
+Run this single Bash command to fetch all active sources:
 
-Divide the source list from Step 2 into groups of 4–5 sources. For 20 sources that's 4–5 batches.
+```bash
+node scripts/scrape-all.js
+```
 
-### 3.2: Dispatch Subagents in Parallel
+This script reads all active sources from the DB, fetches each using Browserless.io (via `BROWSERLESS_TOKEN` env var, which renders JavaScript and bypasses bot protection), and falls back to plain fetch if the token is not set. It writes one HTML file per source to `/tmp/eventfinder-page-{id}.html` and a manifest to `/tmp/eventfinder-fetch-manifest.json`.
 
-Use the **Agent tool** to spawn one subagent per batch simultaneously. Pass each subagent:
-- The list of sources to fetch (id, url, name, description)
-- The event extraction instructions below
+After it completes, proceed to 3.2.
+
+### 3.2: Dispatch Extraction Subagents in Parallel
+
+Read `/tmp/eventfinder-fetch-manifest.json` to get the fetch results. Divide the sources into batches of 4–5 and dispatch one subagent per batch simultaneously using the **Agent tool**.
+
+**IMPORTANT**: When calling the Agent tool, set `allowed_tools: ["Read", "Write"]` to prevent subagents from using WebFetch or Bash. They only need to read files and write JSON.
+
+Pass each subagent:
+- The list of sources (id, url, name) with their fetch status (success/failed) and html_file paths — taken directly from the manifest
 - Today's date (for relative date parsing)
+- The output file path to write results to (e.g. `/tmp/eventfinder-batch-1.json`)
 
 **Subagent prompt template**:
 ```
-You are an event scraper. Fetch each URL below using WebFetch and extract events as JSON.
+You are an event extractor. Your ONLY job is to read pre-fetched HTML files and extract events as structured JSON.
+
+You have access to ONLY two tools: Read (to read HTML files) and Write (to write the output JSON).
+The HTML files have already been downloaded for you — do not try to fetch any URLs.
 
 Today's date: {TODAY}
 Default timezone: America/Edmonton
 
-Sources to fetch:
-{SOURCE_LIST}
+Output file: {OUTPUT_FILE}
+
+Sources and their pre-fetched HTML files:
+{SOURCE_LIST_WITH_FILES}
+(Format: source_id | source_url | html_file | fetch_success | fetch_error)
 
 For each source:
-1. Fetch the URL with WebFetch
-2. Extract all events from the page content
-3. If the page returns minimal/empty content (JS-rendered), mark as js_heavy=true
+1. If fetch_success is false: record it as failed with the fetch_error message — do NOT try to fetch it yourself
+2. If fetch_success is true: use the Read tool to read the HTML file, then extract all events from the content
 
-Return a JSON object:
+Build a JSON object:
 {
   "results": [
     {
@@ -113,152 +154,68 @@ Return a JSON object:
 
 Rules:
 - Return empty "events": [] if no events found on a page
+- Mark js_heavy=true if the HTML looks like a JS-only shell (minimal content, no events visible)
 - Parse dates carefully — handle "Tomorrow", "Next Friday", relative dates
 - Include all instances for recurring events
-- Return only the JSON object, no other text
+
+Write the JSON object to the output file using the Write tool, then return only a one-line summary like:
+"Batch complete: 3 sources succeeded, 1 failed, 42 events extracted. Written to {OUTPUT_FILE}"
 ```
 
 ### 3.3: Collect Subagent Results
 
-Wait for all subagents to complete. Combine all `results` arrays into a single flat list of source results.
+Wait for all subagents to complete. Each subagent has written its results to `/tmp/eventfinder-batch-N.json`. Run the import script to merge all batch files into the database:
 
-### 3.4: Update Source Status in Database
-
-For each source result, update the database:
-
-**On success:**
 ```bash
-node scripts/db-query.js "UPDATE sources SET last_checked_at = CURRENT_TIMESTAMP, last_success_at = CURRENT_TIMESTAMP, consecutive_failures = 0, error_message = NULL, error_type = NULL WHERE id = ?" '<source_id>'
+node scripts/import-batch-results.js
 ```
 
-**On failure:**
-```bash
-node scripts/db-query.js "UPDATE sources SET last_checked_at = CURRENT_TIMESTAMP, consecutive_failures = consecutive_failures + 1, error_message = ?, error_type = ? WHERE id = ?" '"<error message>"' '"<error type>"' '<source_id>'
-```
+This script handles everything: deduplication, DB insertion, and source status updates. **Do not write your own insertion script** — use this one. If it reports "No batch files found", check that the subagents actually wrote their output files before proceeding.
 
-**Auto-disable after 3 failures:**
-```bash
-node scripts/db-query.js "UPDATE sources SET active = 0 WHERE consecutive_failures >= 3"
-```
-
-Note any `js_heavy: true` sources in the Step 9 summary for future Browserless.io upgrade.
+Note any `js_heavy: true` sources reported in the output for the Step 9 summary.
 
 ---
 
-## Step 4: Check for Duplicates
+## Step 4: Assess Unreviewed Events
 
-**For each extracted event**, check if it already exists.
-
-### 4.1: Generate Event Hash
-
-Create a normalized hash from title + venue:
-```
-hash = sha256(normalize(title) + normalize(venue))
-```
-
-Normalization:
-- Lowercase
-- Remove punctuation
-- Remove extra whitespace
-- Remove accents
-
-Example:
-```
-"Jazz Night!" at "Blue Note Café"
-→ "jazznight" + "bluenotecafe"
-→ hash("jazzniteblunotecafe")
-```
-
-### 4.2: Check Exact Match
+`import-batch-results.js` (Step 3.3) already inserted all new events. Now query for events not yet assessed:
 
 ```bash
-node scripts/db-query.js "SELECT id, title, venue FROM events WHERE event_hash = ?" '"<hash>"'
+node scripts/db-query.js "SELECT e.id, e.title, e.venue, e.description, e.price, e.event_url, e.source_id FROM events e WHERE e.id NOT IN (SELECT DISTINCT event_id FROM sent_events)"
 ```
-
-If found: **Skip this event** (already in database)
-
-### 4.3: Fuzzy Duplicate Check
-
-If no exact match, query for similar events:
-
-```bash
-node scripts/db-query.js "SELECT id, title, venue, event_url FROM events e JOIN event_instances ei ON e.id = ei.event_id WHERE e.venue LIKE ? AND ei.instance_date BETWEEN ? AND ? LIMIT 5" '"%<venue_keyword>%"' '"<date_minus_3>"' '"<date_plus_3>"'
-```
-
-**Ask yourself**: Is this new event the same as any of these existing events?
-
-Example reasoning:
-```
-New: "Christmas Afternoon Tea" at "Lougheed House" on Nov 30
-Existing: "Christmas Tea" at "Lougheed House" on Nov 30
-
-Decision: YES, same event (just slightly different wording)
-Action: Skip
-```
-
-If it's a duplicate: **Skip this event**
-
-If it's genuinely new: **Continue to relevance matching**
 
 ---
 
 ## Step 5: Match to User Preferences
 
-For each **new, non-duplicate event**, determine if it matches user interests.
+For each unreviewed event, decide if it matches user interests based on `data/user-preferences.md`.
 
-Use your judgment based on `data/user-preferences.md`:
-
-**Consider**:
-- Does the event type match their interests? (jazz music, pottery class, etc.)
-- Is the venue type relevant? (jazz club, gallery, workshop space)
-- Does it align with their preferences? (time of day, age restrictions)
-- Is it explicitly excluded? (sports, nightclubs, late events)
+**Consider**: event type, venue, timing, price, exclusions. When in doubt, include it.
 
 **Contextual understanding**:
-- "The National" (band) vs "National Holiday" (not a band)
-- "Blue Note" (jazz club) implies jazz music
-- "Workshop" at craft store implies hands-on class
+- "The National" = indie rock band (not a national holiday)
+- "Blue Note" / "jazz club" = jazz music
+- Workshop at craft store = hands-on class
 
-**Output your decision**:
-```json
-{
-  "matches": true,
-  "reason": "User is interested in jazz music, and this is a jazz performance at a well-known jazz venue"
-}
+After assessing ALL events, record every decision in **one batch command**:
+
+```bash
+node scripts/record-relevance-batch.js /tmp/relevance-decisions.json
 ```
 
-or
+Write `/tmp/relevance-decisions.json` first (using the Write tool), then run the command. Format:
 
 ```json
-{
-  "matches": false,
-  "reason": "User excluded sports events, and this is a hockey game"
-}
+[
+  {"event_id": 42, "status": "pending", "reason": "Jazz quartet at intimate venue — matches jazz interest"},
+  {"event_id": 43, "status": "excluded", "reason": "Heavy metal festival — explicitly excluded"}
+]
 ```
 
-### 5.1: Store in Database
+- `status`: `pending` (matches) or `excluded` (does not match)
+- `reason`: one sentence explanation
 
-**Insert event:**
-```bash
-node scripts/db-query.js "INSERT INTO events (event_hash, title, venue, description, price, event_url, ticket_url, image_url, minimum_age, source_id, source_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id" '"<hash>"' '"<title>"' '"<venue>"' '"<description>"' '"<price>"' '"<event_url>"' '"<ticket_url>"' '"<image_url>"' '<minimum_age_or_null>' '<source_id>' '"<source_url>"'
-```
-
-**Insert event instances** (one call per instance):
-```bash
-node scripts/db-query.js "INSERT INTO event_instances (event_id, instance_date, instance_time, end_date, timezone, ticket_sale_date, ticket_sale_time) VALUES (?, ?, ?, ?, ?, ?, ?)" '<event_id>' '"<date>"' '"<time_or_null>"' '<end_date_or_null>' '"America/Edmonton"' '<ticket_sale_date_or_null>' '<ticket_sale_time_or_null>'
-```
-
-**Mark status based on relevance:**
-
-If **matches = true**:
-```bash
-node scripts/db-query.js "INSERT INTO sent_events (event_id, instance_id, status, reason) SELECT ?, id, 'pending', ? FROM event_instances WHERE event_id = ?" '<event_id>' '"<reason>"' '<event_id>'
-```
-
-If **matches = false**:
-```bash
-node scripts/db-query.js "INSERT INTO sent_events (event_id, instance_id, status, reason) SELECT ?, id, 'excluded', ? FROM event_instances WHERE event_id = ?" '<event_id>' '"<reason>"' '<event_id>'
-```
+This script is safe to re-run — it skips events already assessed. **Do not run record-relevance.js once per event** — always use the batch script.
 
 ---
 
@@ -282,7 +239,31 @@ Group events by category:
 
 ### 6.2: Format Discord Messages
 
-Format one message per category. Each message must be **≤ 2000 characters** (Discord limit). Split into multiple messages if needed.
+Format one message per category. Each message must be **≤ 1950 characters** (Discord limit, leave buffer). Split into multiple messages if needed.
+
+**Google Calendar quick-add URL format**:
+```
+https://calendar.google.com/calendar/render?action=TEMPLATE&text=TITLE&dates=START/END&details=DESCRIPTION&location=VENUE
+```
+- `text`: URL-encode the event title
+- `dates`: `YYYYMMDDTHHMMSS/YYYYMMDDTHHMMSS` (local time, no Z suffix — let Google handle timezone)
+  - If no time known: use `YYYYMMDD/YYYYMMDD` (all-day format)
+  - End time: use start + 2 hours if no end time available
+- `details`: URL-encode the event_url
+- `location`: URL-encode the venue name
+
+**YouTube search URL format** (for music events only):
+```
+https://www.youtube.com/results?search_query=ARTIST+NAME
+```
+- URL-encode the artist/band name from the event title
+- Only generate for 🎵 Music category events, not workshops or arts events
+
+Generate **up to 3 links per event**:
+
+1. **Event calendar link** (always): `📆 Add event` — links to the event date/time
+2. **Ticket sale reminder** (only if `ticket_sale_date` is set): `🔔 Tickets on sale [date]` — links to the ticket sale date as an all-day event, with title prefixed "🎫 Tickets on sale: [event title]"
+3. **YouTube search** (music events only): `🎧 Listen` — YouTube search for the artist name
 
 **Format**:
 ```
@@ -290,31 +271,35 @@ Format one message per category. Each message must be **≤ 2000 characters** (D
 
 **Jazz Night with Sarah Vaughan Tribute**
 📅 Fri Oct 15 at 8:00 PM · 📍 Blue Note Jazz Club · 💰 $25-$35
-🎫 <ticket_url> · 🔗 <event_url>
+🔗 <event_url> · 📆 Add event · 🎧 Listen
 
 **The National - Live**
 📅 Sat Oct 22 at 8:00 PM · 📍 MacEwan Ballroom · 💰 $50-$75
-🎫 <ticket_url>
+🎫 <ticket_url> · 🔗 <event_url> · 📆 Add event · 🔔 Tickets on sale Apr 1 · 🎧 Listen
 ```
 
-Only include fields that are available (skip null fields).
+Only include fields that are available (skip null fields). Always include 📆. Only include 🔔 if ticket_sale_date is known. Only include 🎧 for music events.
 
 ---
 
 ## Step 7: Post to Discord
 
-Use the Bash tool to POST each category message to the Discord webhook:
+Use the Bash tool to POST each category message to the Discord webhook using `curl`. **Always use curl — do not use Node.js fetch, which times out in this environment.**
+
+**Always write the JSON body to a temp file** — never inline it in the shell command. Inlining breaks `$` signs (prices like `$25` become empty strings) and single quotes in content.
 
 ```bash
-node -e "
-const url = process.env.DISCORD_WEBHOOK_URL;
-fetch(url, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ content: '<message>' })
-}).then(r => console.log('Status:', r.status));
-"
+# Write message to temp file first (preserves $, quotes, special chars)
+node -e "require('fs').writeFileSync('/tmp/discord_msg.json', JSON.stringify({content: process.argv[1]}))" "<message>"
+
+# Then post it
+curl -s -o /dev/null -w "%{http_code}" \
+  -H "Content-Type: application/json" \
+  -d @/tmp/discord_msg.json \
+  "$DISCORD_WEBHOOK_URL"
 ```
+
+A response of `204` means success. If you get a non-204 response or an error, retry once before giving up.
 
 Post a header message first:
 ```
@@ -341,8 +326,9 @@ Then commit the updated database back to GitHub:
 git config user.email "eventfinder-bot@users.noreply.github.com"
 git config user.name "EventFinder Bot"
 git add data/eventfinder.db
-git commit -m "chore: update event database [skip ci]"
-git push
+git commit -m "chore: update event database with $(date +%Y-%m-%d) discovery run [skip ci]"
+git pull origin main --no-rebase -X ours
+git push origin HEAD:main
 ```
 
 **If Discord post failed**: Do NOT mark as sent (events stay 'pending' for retry next run). Still commit the DB to save any newly discovered events.

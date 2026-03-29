@@ -21,7 +21,13 @@ const FILE_MAPPINGS = [
 const DIR_MAPPINGS = [
   ['context', 'context'],                // Context files
   ['templates', 'templates'],            // Prompt templates (if exists)
-  ['commands', '.claude/commands'],      // Slash commands
+  ['commands', '.claude/commands'],      // Slash commands (build output)
+];
+
+// Project-root mappings: always kept in sync with src/ (used by local Claude Code)
+const ROOT_DIR = path.join(__dirname, '..');
+const ROOT_DIR_MAPPINGS = [
+  ['commands', '.claude/commands'],      // Slash commands (local dev)
 ];
 
 /**
@@ -98,6 +104,15 @@ function build() {
     copyDir(
       path.join(SRC_DIR, src),
       path.join(BUILD_DIR, dest)
+    );
+  }
+
+  // Also sync commands to project-root .claude/commands/ for local dev
+  console.log('\n📁 Syncing to project root (local dev):');
+  for (const [src, dest] of ROOT_DIR_MAPPINGS) {
+    copyDir(
+      path.join(SRC_DIR, src),
+      path.join(ROOT_DIR, dest)
     );
   }
 
