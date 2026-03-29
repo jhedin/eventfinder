@@ -18,9 +18,27 @@ If **no active flyer sources**: Report "No active flyer sources. Use /add-flyer-
 
 ---
 
-## Step 2: Fetch All Flyer Sources
+## Step 2: Read Gmail Flyer Newsletters
 
-Run the scraper with the flyer type flag:
+**If the Gmail connector is available**, read unread flyer newsletter emails:
+
+1. Search for unread flyer emails: `to:j.hedin.open.claw+flyers@gmail.com is:unread newer_than:7d`
+2. For each email:
+   - Read the plain text / HTML body
+   - Identify the store name from the sender or subject line
+   - Pass the body through the same deal extraction process as Step 4 (treat it like markdown from a flyer page)
+3. Mark each email as read after processing
+4. Associate extracted deals with the matching source in the DB (match by store name), or create a temporary source entry if none exists
+
+Feed extracted deals into the same deduplication and import pipeline (Steps 4–5).
+
+**If Gmail connector is not available**: Skip this step and continue.
+
+---
+
+## Step 3: Fetch All Flyer Sources (Optional)
+
+If there are active flyer sources in the database (from Step 1), run the scraper:
 
 ```bash
 node scripts/scrape-all.js --type=flyer
@@ -28,15 +46,17 @@ node scripts/scrape-all.js --type=flyer
 
 This fetches all active flyer source pages and writes HTML files + manifest to `/tmp/eventfinder-flyer-*`.
 
+**If no active flyer sources in the DB**: Skip this step (Gmail newsletters from Step 2 may be the only source).
+
 ---
 
-## Step 3: Extract Deals (Parallel Subagents)
+## Step 4: Extract Deals (Parallel Subagents)
 
 Read the manifest at `/tmp/eventfinder-flyer-fetch-manifest.json` to see which pages were fetched successfully.
 
 Dispatch subagents in **batches of 4–5** sources to avoid filling the main context with raw HTML.
 
-### 3.1: Dispatch Subagents in Parallel
+### 4.1: Dispatch Subagents in Parallel
 
 Use the **Agent tool** to spawn one subagent per batch simultaneously. Pass each subagent:
 - The list of sources with their HTML file paths from the manifest
@@ -92,7 +112,7 @@ Rules:
 - Return only the JSON object, no other text
 ```
 
-### 3.2: Collect and Write Batch Results
+### 4.2: Collect and Write Batch Results
 
 Each subagent writes its results to `/tmp/eventfinder-flyer-batch-{N}.json`.
 
@@ -100,7 +120,7 @@ Wait for all subagents to complete.
 
 ---
 
-## Step 4: Import Results
+## Step 5: Import Results
 
 Run the flyer import script:
 
@@ -114,7 +134,7 @@ Note the import summary (new items, duplicates, failures).
 
 ---
 
-## Step 5: Generate Discord Digest
+## Step 6: Generate Discord Digest
 
 Query for all pending (unsent) flyer items:
 
@@ -122,16 +142,16 @@ Query for all pending (unsent) flyer items:
 node scripts/db-query.js "SELECT fi.*, s.name as store_name, sfi.id as sent_id FROM flyer_items fi JOIN sources s ON s.id = fi.source_id JOIN sent_flyer_items sfi ON sfi.flyer_item_id = fi.id WHERE sfi.status = 'pending' ORDER BY s.name, fi.category, fi.item_name"
 ```
 
-If **no pending items**: Skip to Step 7 and report "No new flyer deals to send."
+If **no pending items**: Skip to Step 9 and report "No new flyer deals to send."
 
-### 5.1: Group by Store, then Category
+### 6.1: Group by Store, then Category
 
 Organize deals hierarchically:
 1. Group by `store_name`
 2. Within each store, group by `category`
 3. Within each category, list items alphabetically
 
-### 5.2: Format Discord Messages
+### 6.2: Format Discord Messages
 
 Each message must be **<= 2000 characters** (Discord limit). Split across multiple messages if needed.
 
@@ -171,7 +191,7 @@ Each message must be **<= 2000 characters** (Discord limit). Split across multip
 
 ---
 
-## Step 6: Post to Discord
+## Step 7: Post to Discord
 
 Use the Bash tool to POST each message to the Discord flyers webhook:
 
@@ -189,11 +209,11 @@ fetch(url, {
 
 Post the header message first, then one message per store (splitting if over 2000 chars).
 
-**If `DISCORD_FLYERS_WEBHOOK_URL` is not set**: Skip this step, log a warning, continue to Step 7.
+**If `DISCORD_FLYERS_WEBHOOK_URL` is not set**: Skip this step, log a warning, continue to Step 8.
 
 ---
 
-## Step 7: Mark Items as Sent + Save Database
+## Step 8: Mark Items as Sent + Save Database
 
 After successful Discord post, mark all posted items as sent:
 
@@ -215,7 +235,7 @@ git push
 
 ---
 
-## Step 8: Report Summary
+## Step 9: Report Summary
 
 Display a summary:
 

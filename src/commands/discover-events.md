@@ -61,7 +61,7 @@ This gives you the websites to check for events.
 
 **If the Gmail connector is available**, read unread venue newsletters:
 
-1. Search for unread emails: `is:unread newer_than:2d`
+1. Search for unread emails: `is:unread newer_than:2d -to:j.hedin.open.claw+flyers@gmail.com`
 2. For each email: extract the plain text body
 3. Pass the body through the same event extraction process as Step 3.2 (treat it like markdown from a website)
 4. Mark each email as read after processing
