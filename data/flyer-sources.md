@@ -3,55 +3,46 @@
 Email: `j.hedin.open.claw+flyers@gmail.com`
 Postal code: `T3C 0W1`
 
-## Signup Recon Summary
-
-### Easy — Simple email form, no store selection needed
-
-| # | Store | Signup URL | Method | Notes |
-|---|-------|-----------|--------|-------|
-| 6 | Shoppers Drug Mart | https://www.shoppersdrugmart.ca/en/email-signup | Email-only form | National flyer, no store selection. No CAPTCHA. Mentions "weekly flyer deals." |
-| 8 | Costco | https://www.costco.ca/email-sign-up.html | Email + optional warehouse | Regional (Alberta-wide) flyer. Optional membership # and warehouse dropdown. Site blocks bots — needs Browserless. |
-
-### Medium — Has signup, but needs store selection or account
-
-| # | Store | Signup URL | Method | Notes |
-|---|-------|-----------|--------|-------|
-| 2 | Safeway | https://www.safeway.ca/subscription | Gigya lite registration | Fields: email, first name, last name, postal code (T3C 0W1), 2 consent checkboxes. No CAPTCHA, no account needed. Postal code determines store flyer. Store #8812 = Westbrook area. JS-rendered (needs Browserless). |
-| 1 | Sobeys Liquor | https://liquor.sobeys.com/subscription/ | Gigya lite registration | Same as Safeway. Fields: email, first/last name (optional), postal code (T3C 0W1), 2 checkboxes. No CAPTCHA. Store 96924 = Safeway Liquor Mission (504 Elbow Dr SW). **Bonus: auto-subscribes to ALL Sobeys banners (Safeway, FreshCo, etc.) on submit.** Needs Browserless. |
-| 3 | Canadian Tire | https://www.canadiantire.ca/en/triangle-loyalty-offers-program-registration.html | Email widget or Triangle account | Store #930 = Calgary Mount Royal (906 16 Ave SW). Simple email widget on loyalty page (no account needed), or full Triangle Rewards account for store-specific flyer. Akamai bot protection — needs Browserless. May need email verification. |
-
-### Hard — JS-heavy, Cloudflare blocks, or Loblaw ecosystem
-
-| # | Store | Signup URL | Method | Notes |
-|---|-------|-----------|--------|-------|
-| 11 | No Frills | https://www.pcoptimum.ca/en/eflyers-subscription | PC Optimum eflyer form | Fields: province (AB), preferred flyer (No Frills), language (English), email, consent checkbox. No account, no CAPTCHA. Provincial level, not store-specific. JS-rendered — needs Browserless. |
-| 13 | Real Canadian Superstore | https://www.pcoptimum.ca/en/eflyers-subscription | PC Optimum eflyer form | Same form as No Frills — select "Real Canadian Superstore" as preferred flyer. Provincial (AB), not store-specific (no Deerfoot Meadows selection). |
-| 12 | Wholesale Club | N/A | **No email option** | `DigitalFlyerSubscriptions` flag DISABLED. Not in PC Optimum eflyer dropdown. Only option is Flipp account alerts or direct scraping. 58th Avenue location. |
-| 5 | Save-On-Foods | https://www.flyerbox.ca/save-on-foods/ (or create account at secure.saveonfoods.com) | Account-gated or flyerbox.ca | Store = Mount Royal (RSID 1982, 906 16 Ave SW). No standalone email form — need Save-On-Foods or More Rewards account to get flyer emails directly. flyerbox.ca is the easy no-account alternative. Cloudflare blocks bots. |
-
-### Likely No Email Subscription Available
-
-| # | Store | Flyer URL | Notes |
-|---|-------|-----------|-------|
-| 4 | London Drugs | https://www.londondrugs.com/enewsletter-settings | eNewsletter form (email, then set preferences) | Store #31 = London Town Square (3545 32nd Ave NE). Email-first signup, then set postal code/store on preferences page. Cloudflare blocks — needs Browserless. No CAPTCHA expected. |
-| 7 | T&T Supermarket | https://www.flyerbox.ca/deals/calgary/tt-supermarket/ | **No email on T&T site.** Use flyerbox.ca instead — email-only signup, no CAPTCHA, Calgary-wide flyer. Nearest stores: 999 36 St NE and 9650 Harvest Hills Blvd NE. |
-| 9 | Calgary Co-op (Food) | https://www.calgarycoop.com/newsletter/ | General newsletter (HubSpot form). Fields: first name, last name, email, consent. No store selection, no CAPTCHA. Not flyer-specific but covers "special offers, new products." |
-| 10 | Co-op Wine Spirits Beer | https://www.coopwinespiritsbeer.com/flyers/ | **No flyer email found.** Uses Flipp widget (merchant 3407). No email signup anywhere on site. Midtown location. |
-
 ## Subscription Status
 
-| # | Store | Status |
-|---|-------|--------|
-| 1 | Sobeys Liquor | Not subscribed |
-| 2 | Safeway | Subscribed 2026-03-29 |
-| 3 | Canadian Tire | Not subscribed |
-| 4 | London Drugs | Not subscribed — needs Browserless recon |
-| 5 | Save-On-Foods | Not subscribed — needs Browserless recon |
-| 6 | Shoppers Drug Mart | Not subscribed |
-| 7 | T&T Supermarket | Not subscribed — likely no email option |
-| 8 | Costco | Not subscribed |
-| 9 | Calgary Co-op (Food) | Not subscribed — likely no email option |
-| 10 | Co-op Wine Spirits Beer | Not subscribed — likely no email option |
-| 11 | No Frills | Not subscribed |
-| 12 | Wholesale Club | Not subscribed — may not have flyer email |
-| 13 | Real Canadian Superstore | Not subscribed |
+| # | Store | Status | Method | Notes |
+|---|-------|--------|--------|-------|
+| 1 | Sobeys Liquor | **Not subscribed** — Browserless quota hit | Gigya form at liquor.sobeys.com/subscription/ | Same Gigya as Safeway. Auto-subs all Sobeys banners. Store 96924 = Safeway Liquor Mission (504 Elbow Dr SW). |
+| 2 | Safeway | **Subscribed 2026-03-29** | Gigya form at safeway.ca/subscription | Fields: email, first/last name, postal code (T3C 0W1), 2 checkboxes. Store #8812 Westbrook. |
+| 3 | Canadian Tire | **Not subscribed** — Browserless quota hit | Email widget at canadiantire.ca/en/triangle-loyalty-offers-program-registration.html | Store #930 = Calgary Mount Royal (906 16 Ave SW). Akamai bot protection. |
+| 4 | London Drugs | **Not subscribed** — Browserless quota hit | eNewsletter at londondrugs.com/enewsletter-settings | Store #31 = London Town Square (3545 32nd Ave NE). Cloudflare. |
+| 5 | Save-On-Foods | **Submitted, needs email confirmation** | flyerbox.ca/save-on-foods/ | Store = Mount Royal (RSID 1982, 906 16 Ave SW). Check inbox for confirmation link. |
+| 6 | Shoppers Drug Mart | **Not subscribed** — Browserless quota hit | Email form at shoppersdrugmart.ca/en/email-signup | National flyer, no store selection needed. |
+| 7 | T&T Supermarket | **Needs manual signup** — Turnstile CAPTCHA | flyerbox.ca/deals/calgary/tt-supermarket/ | No email on T&T site. Flyerbox has CAPTCHA. Nearest stores: 999 36 St NE, 9650 Harvest Hills NE. |
+| 8 | Costco | **Not subscribed** — Browserless quota hit | Email form at costco.ca/email-sign-up.html | Regional (Alberta-wide). Optional warehouse dropdown for S Calgary. |
+| 9 | Calgary Co-op (Food) | **Subscribed 2026-03-29** | HubSpot form at calgarycoop.com/newsletter/ | General newsletter. Fields: first/last name, email, consent. |
+| 10 | Co-op Wine Spirits Beer | **No email option** — use Flipp API | Flipp merchant 3407 | backflipp.wishabi.com API returns structured JSON. |
+| 11 | No Frills | **Subscribed 2026-03-29** | PC Optimum eflyer at pcoptimum.ca/eflyers-subscription | Province: AB, Banner: No Frills, Language: EN. |
+| 12 | Wholesale Club | **No email option** — use Flipp API | Flipp merchant 2702 | DigitalFlyerSubscriptions flag disabled. backflipp.wishabi.com API works. |
+| 13 | Real Canadian Superstore | **Subscribed 2026-03-29** | PC Optimum eflyer at pcoptimum.ca/eflyers-subscription | Province: AB, Banner: RCSS, Language: EN. |
+
+## Flipp API (for stores without email)
+
+Public JSON API — no auth needed:
+```
+# Step 1: Get current flyers for Calgary
+GET https://backflipp.wishabi.com/flipp/flyers?locale=en-ca&postal_code=T3C0W1
+# Filter by merchant_id client-side
+
+# Step 2: Get all items for a specific flyer
+GET https://backflipp.wishabi.com/flipp/flyers/{flyer_id}
+```
+
+Known merchant IDs:
+- Calgary Co-op Food: 2051 (126 items in current flyer)
+- Co-op Wine Spirits Beer: 3407 (41 items)
+- Wholesale Club: 2702 (123 items)
+
+Returns: item name, brand, price, discount %, image URL, validity dates.
+
+## Still TODO
+
+1. **Confirm Save-On-Foods** — click confirmation link in email
+2. **Manual signup: T&T** — flyerbox.ca, needs browser for Turnstile CAPTCHA
+3. **Retry when Browserless resets**: Shoppers, Costco, Sobeys Liquor, Canadian Tire, London Drugs
+4. **Add Flipp API support** to discover-flyers workflow for Co-op WSB + Wholesale Club
