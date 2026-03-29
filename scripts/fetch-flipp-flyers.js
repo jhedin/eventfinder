@@ -49,15 +49,44 @@ async function fetchJSON(url) {
 function categorizeItem(name, brand) {
   const n = (name || '').toLowerCase();
   const b = (brand || '').toLowerCase();
-  if (/chicken|beef|pork|salmon|fish|shrimp|steak|ground|sausage|bacon|turkey|lamb|deli|meat/.test(n)) return 'Meat & Seafood';
-  if (/apple|banana|avocado|tomato|lettuce|onion|potato|berry|fruit|vegetable|produce|orange|grape|mango|pepper|cucumber|carrot|celery|mushroom|strawberr/.test(n)) return 'Produce';
-  if (/milk|cheese|yogurt|butter|cream|egg|margarine|dairy/.test(n)) return 'Dairy';
-  if (/bread|bun|bagel|muffin|cake|pastry|croissant|donut|bakery/.test(n)) return 'Bakery';
-  if (/frozen|ice cream|pizza|fries/.test(n)) return 'Frozen';
-  if (/juice|pop|soda|water|coffee|tea|beverage|drink|beer|wine|spirit|liquor|vodka|rum|whisky|gin|cooler|cider/.test(n)) return 'Beverages';
-  if (/soap|shampoo|toothpaste|deodorant|lotion|tissue|toilet|paper towel|diaper|vitamin|medicine|pharmacy/.test(n)) return 'Personal Care';
-  if (/cleaner|detergent|garbage|trash|pet food|dog|cat|laundry|dish/.test(n)) return 'Household';
-  return 'Pantry';
+  if (/chicken|beef|pork|salmon|fish|shrimp|steak|ground|sausage|bacon|turkey|lamb|deli|meat|ribs|roast|tenderloin|brisket|ham |prosciutto|pepperoni|salami/.test(n)) return 'Meat & Seafood';
+  if (/apple|banana|avocado|tomato|lettuce|onion|potato|berry|fruit|vegetable|produce|orange|grape|mango|pepper|cucumber|carrot|celery|mushroom|strawberr|blueberr|raspberr|peach|pear|plum|melon|watermelon|corn|broccoli|spinach|kale|zucchini|squash|herbs|cilantro|basil/.test(n)) return 'Produce';
+  if (/milk|cheese|yogurt|butter|cream|egg|margarine|dairy|sour cream|cottage|whipping/.test(n)) return 'Dairy';
+  if (/bread|bun|bagel|muffin|cake|pastry|croissant|donut|bakery|tortilla|pita|wrap|naan|baguette/.test(n)) return 'Bakery';
+  if (/frozen|ice cream|pizza|fries|popsicle|gelato|frozen meal/.test(n)) return 'Frozen';
+  if (/juice|pop|soda|water|coffee|tea|beverage|drink|beer|wine|spirit|liquor|vodka|rum|whisky|whiskey|gin|cooler|cider|lager|ale|champagne|prosecco|sangria|merlot|cabernet|chardonnay|pinot|sauvignon|riesling|rosé|rose|bourbon|scotch|tequila|brandy|cognac/.test(n)) return 'Beverages';
+  if (/soap|shampoo|toothpaste|deodorant|lotion|tissue|toilet|paper towel|diaper|vitamin|medicine|pharmacy|tylenol|advil|bandage|moisturizer|conditioner|razor|makeup|mascara|lipstick|foundation|sunscreen/.test(n)) return 'Personal Care';
+  if (/cleaner|detergent|garbage|trash|pet food|dog food|cat food|cat litter|laundry|dish soap|bleach|swiffer|lysol|windex|glad|ziploc/.test(n)) return 'Household';
+  // Non-food / non-grocery (Canadian Tire tools, London Drugs electronics, etc.)
+  if (/drill|socket|wrench|saw|battery|charger|cable|hdmi|usb|printer|ink|monitor|keyboard|mouse|laptop|phone|case|speaker|headphone|camera|tripod|sd card|flash drive|tire|motor oil|antifreeze|windshield|filter|brake|wiper|bulb|light|lamp|extension cord|power bar|tool|hammer|screwdriver|level|tape measure|paint|stain|brush|roller|sandpaper|caulk|glue|nail|screw|bolt|hook|hanger|shelf|organizer|bin|container|storage|luggage|backpack|tent|sleeping bag|cooler|grill|bbq|propane|charcoal/.test(n)) return 'Non-Food';
+  if (/cereal|pasta|rice|sauce|soup|can|chip|cracker|cookie|chocolate|candy|granola|oat|nut|peanut|almond|snack|salsa|hummus|olive|oil|vinegar|spice|salt|sugar|flour|baking|jam|jelly|honey|syrup|condiment|ketchup|mustard|mayo|dressing|pickle|relish/.test(n)) return 'Pantry';
+  return 'Other';
+}
+
+// Categories to include in output (food + drinks only)
+const FOOD_CATEGORIES = new Set([
+  'Meat & Seafood', 'Produce', 'Dairy', 'Bakery', 'Frozen', 'Beverages', 'Pantry',
+]);
+
+// Check if an item has a meaningful discount
+function hasSignificantDiscount(item) {
+  // Has explicit discount percentage >= 20%
+  if (item.discount && item.discount >= 20) return true;
+  // Has both sale and regular price — calculate savings
+  if (item.price && item.original_price) {
+    const sale = parseFloat(item.price);
+    const reg = parseFloat(item.original_price);
+    if (reg > 0 && sale < reg) {
+      const pctOff = ((reg - sale) / reg) * 100;
+      return pctOff >= 20;
+    }
+  }
+  // Has any price (might be a deal even without regular price shown)
+  // Be lenient — include items that have a price, since they're in the flyer for a reason
+  if (item.price) return true;
+  // Has a discount but less than 20%
+  if (item.discount) return true;
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,8 +150,19 @@ async function main() {
         `https://backflipp.wishabi.com/flipp/flyers/${flyer.id}`
       );
 
+      let totalRaw = 0;
+      let skippedNonFood = 0;
+      let skippedNoDiscount = 0;
+
       const items = (flyerData.items || [])
-        .filter(item => item.name && item.name.trim()) // skip unnamed items
+        .filter(item => {
+          if (!item.name || !item.name.trim()) return false;
+          totalRaw++;
+          const cat = categorizeItem(item.name, item.brand);
+          if (!FOOD_CATEGORIES.has(cat)) { skippedNonFood++; return false; }
+          if (!hasSignificantDiscount(item)) { skippedNoDiscount++; return false; }
+          return true;
+        })
         .map(item => ({
           item_name: item.name || '',
           brand: item.brand || null,
@@ -137,7 +177,7 @@ async function main() {
           image_url: item.cutout_image_url || null,
         }));
 
-      console.log(`${items.length} items`);
+      console.log(`${items.length} items (${skippedNonFood} non-food, ${skippedNoDiscount} no discount skipped out of ${totalRaw})`);
 
       // Try to find the matching source in the DB
       const nameLower = merchantName.toLowerCase();

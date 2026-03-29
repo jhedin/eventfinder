@@ -81,16 +81,17 @@ node scripts/db-query.js "SELECT fi.*, s.name as store_name, sfi.id as sent_id F
 
 If **no pending items**: Skip to Step 8 and report "No new flyer deals to send."
 
-### 5.1: Group by Store, then Category
+### 5.1: Group by Category, then Store
 
-Organize deals hierarchically:
-1. Group by `store_name`
-2. Within each store, group by `category`
-3. Within each category, list items alphabetically
+Organize deals **by category first**, with store names as tags on each item. This makes it easy to compare prices across stores.
+
+1. Group all items by `category`
+2. Within each category, sort by `item_name` to cluster similar products together
+3. Include the store name on each item line so readers can compare
 
 ### 5.2: Format Discord Messages
 
-Each message must be **<= 2000 characters** (Discord limit). Split across multiple messages if needed.
+Each message must be **<= 2000 characters** (Discord limit). Split across multiple messages if needed — one or more messages per category.
 
 **Category emoji map**:
 - Produce → 🥬
@@ -100,31 +101,29 @@ Each message must be **<= 2000 characters** (Discord limit). Split across multip
 - Frozen → 🧊
 - Pantry → 🥫
 - Beverages → 🥤
-- Household → 🏠
-- Personal Care → 🧴
-- Other → 📦
 
 **Header message**:
 ```
 🛒 **Flyer Deals** — {count} deals from {store_count} stores · {date}
 ```
 
-**Per-store format**:
+**Per-category format**:
 ```
-**{Store Name}** (valid {sale_start} - {sale_end})
+🥩 **Meat & Seafood**
+• Boneless Chicken Breast — **$4.99/lb** @ Safeway ~~$7.99~~
+• Boneless Chicken Breast — **$5.49/lb** @ Co-op
+• Ground Beef — **$3.99/lb** @ No Frills ~~$5.99~~
+• Salmon Fillets — **$9.99/lb** @ Superstore ~~$13.99~~
 
-🥩 Meat & Seafood
-• Boneless Chicken Breast — **$4.99/lb** ~~$7.99~~
-• Atlantic Salmon Fillets — **$9.99/lb** ~~$13.99~~
-
-🥬 Produce
-• Strawberries 1lb — **2 for $5**
-• Avocados — **$0.99 ea** ~~$1.49~~
+🥬 **Produce**
+• Strawberries 1lb — **2 for $5** @ Superstore
+• Avocados — **$0.99 ea** @ Safeway ~~$1.49~~
 ```
 
 - Show `~~regular_price~~` strikethrough only if regular_price is available
-- Include brand in parentheses if present: `• Chicken Breast (Maple Leaf) — **$4.99/lb**`
-- If a store has many deals, prioritize showing them all but split into multiple messages if needed
+- Include brand in parentheses if present: `• Chicken Breast (Maple Leaf) — **$4.99/lb** @ Safeway`
+- **@ Store** goes after the price/strikethrough
+- If a category has many items, split into multiple messages
 
 ---
 
@@ -217,8 +216,9 @@ Database committed to GitHub: ✅
 
 - **Flipp API is the primary source**: Structured JSON, no auth, no browser needed. Covers all 13 configured stores.
 - **Gmail newsletters are supplemental**: May catch deals or store-specific promotions not in Flipp.
-- **No preference filtering**: All deals are posted (no relevance matching step)
-- **Group by store**: Deals are organized by store, then by category within each store
+- **Food + drinks only**: Non-food items (tools, electronics, etc.) are filtered out by the fetch script
+- **Significant discounts**: Items without a meaningful discount are skipped
+- **Group by category**: Deals are organized by food category (Meat, Produce, Dairy, etc.) with store tags on each item for easy cross-store comparison
 - **Deduplication**: Items are hashed by name + brand + price + source + sale_end to avoid re-posting
 - **Separate channel**: Uses `DISCORD_FLYERS_WEBHOOK_URL` (not the events webhook)
 
