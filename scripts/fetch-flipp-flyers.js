@@ -10,6 +10,14 @@ import { createRequire } from 'module';
 import { writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { setGlobalDispatcher, ProxyAgent } from 'undici';
+
+// Honour standard proxy env vars (Node's built-in fetch/undici ignores them by default)
+const proxyUrl = process.env.https_proxy || process.env.HTTPS_PROXY ||
+                 process.env.http_proxy  || process.env.HTTP_PROXY;
+if (proxyUrl) {
+  setGlobalDispatcher(new ProxyAgent(proxyUrl));
+}
 
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
@@ -96,9 +104,10 @@ function hasSignificantDiscount(item) {
 async function main() {
   // Step 1: Get all current flyers for our postal code
   console.log(`Fetching flyers for postal code ${POSTAL_CODE}...`);
-  const allFlyers = await fetchJSON(
+  const flyersResp = await fetchJSON(
     `https://backflipp.wishabi.com/flipp/flyers?locale=en-ca&postal_code=${POSTAL_CODE}`
   );
+  const allFlyers = Array.isArray(flyersResp) ? flyersResp : (flyersResp.flyers || []);
 
   // Filter to our merchants and pick the most recent flyer per merchant
   const merchantIds = Object.keys(MERCHANTS).map(Number);
