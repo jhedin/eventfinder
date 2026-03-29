@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Rules
 
-**No Python.** This is a Node.js project. Never use `python3`, `python`, or any Python script — not inline, not ad-hoc, not for "quick" data manipulation. Use `node -e` or add a file to `scripts/`. A hook will block Python commands.
+**No inline scripts.** Never use `node -e` or shell one-liners for data processing. Inline scripts are unreliable — they break on special characters, quoting, and newlines. All logic must live in `scripts/` files.
+
+**No Python.** This is a Node.js project. Never use `python3`, `python`, or any Python script — not inline, not ad-hoc, not for "quick" data manipulation. A hook will block Python commands.
 
 **No ad-hoc scripts for workflow steps.** When running `/discover-events` or any other slash command, follow the instructions in `src/commands/` exactly. Do not write one-off scripts to replace workflow steps. If a session was interrupted, check DB state and resume from the correct step per the workflow's "Resuming" section.
 
