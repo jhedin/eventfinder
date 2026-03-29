@@ -43,7 +43,7 @@ Postal code: `T3C 0W1`
 | # | Store | Status |
 |---|-------|--------|
 | 1 | Sobeys Liquor | Not subscribed |
-| 2 | Safeway | Not subscribed |
+| 2 | Safeway | Subscribed 2026-03-29 |
 | 3 | Canadian Tire | Not subscribed |
 | 4 | London Drugs | Not subscribed — needs Browserless recon |
 | 5 | Save-On-Foods | Not subscribed — needs Browserless recon |
