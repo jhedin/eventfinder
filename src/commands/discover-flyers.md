@@ -1,126 +1,63 @@
 # Discover Flyers
 
-**You are FlyerFinder.** Run the complete flyer discovery workflow: fetch grocery store flyer pages, extract deals, and post digest to Discord.
+**You are FlyerFinder.** Run the complete flyer discovery workflow: fetch deals from the Flipp API and Gmail newsletters, then post digest to Discord.
 
 ---
 
-## Step 1: Query Active Flyer Sources
-
-Run the following query using `node scripts/db-query.js`:
+## Step 1: Install Dependencies
 
 ```bash
-node scripts/db-query.js "SELECT id, url, name, description FROM sources WHERE active = 1 AND type = 'flyer' ORDER BY last_checked_at ASC"
+npm install
 ```
-
-This gives you the grocery store flyer pages to check.
-
-If **no active flyer sources**: Report "No active flyer sources. Use /add-flyer-source to add one." and stop.
 
 ---
 
-## Step 2: Read Gmail Flyer Newsletters
+## Step 2: Fetch Flyer Deals from Flipp API (Primary Source)
 
-**If the Gmail connector is available**, read unread flyer newsletter emails:
+Run the Flipp fetch script:
+
+```bash
+node scripts/fetch-flipp-flyers.js
+```
+
+This calls the public Flipp API (`backflipp.wishabi.com`) which returns structured JSON for all configured merchants in the Calgary area. It writes results to `/tmp/eventfinder-flyer-batch-flipp.json`.
+
+The script is pre-configured with these merchant IDs:
+- 208: Shoppers Drug Mart
+- 228: London Drugs
+- 2051: Calgary Co-op
+- 2072: Sobeys
+- 2126: Safeway
+- 2271: Real Canadian Superstore
+- 2332: No Frills
+- 2471: Canadian Tire
+- 2596: Costco
+- 2702: Wholesale Club
+- 3407: Co-op Wine Spirits Beer
+- 3656: Sobeys & Safeway Liquor
+- 6373: T&T Supermarket
+
+No authentication, no browser, no scraping — just structured JSON.
+
+---
+
+## Step 3: Read Gmail Flyer Newsletters (Supplemental)
+
+**If the Gmail connector is available**, read unread flyer newsletter emails for any deals not covered by Flipp:
 
 1. Search for unread flyer emails: `to:j.hedin.open.claw+flyers@gmail.com is:unread newer_than:7d`
 2. For each email:
    - Read the plain text / HTML body
    - Identify the store name from the sender or subject line
-   - Pass the body through the same deal extraction process as Step 4 (treat it like markdown from a flyer page)
+   - Pass the body through deal extraction (use the template in `src/templates/extract-flyers-from-markdown.md`)
+   - Write results to `/tmp/eventfinder-flyer-batch-gmail.json` in the same format
 3. Mark each email as read after processing
-4. Associate extracted deals with the matching source in the DB (match by store name), or create a temporary source entry if none exists
-
-Feed extracted deals into the same deduplication and import pipeline (Steps 4–5).
 
 **If Gmail connector is not available**: Skip this step and continue.
 
 ---
 
-## Step 3: Fetch All Flyer Sources (Optional)
-
-If there are active flyer sources in the database (from Step 1), run the scraper:
-
-```bash
-node scripts/scrape-all.js --type=flyer
-```
-
-This fetches all active flyer source pages and writes HTML files + manifest to `/tmp/eventfinder-flyer-*`.
-
-**If no active flyer sources in the DB**: Skip this step (Gmail newsletters from Step 2 may be the only source).
-
----
-
-## Step 4: Extract Deals (Parallel Subagents)
-
-Read the manifest at `/tmp/eventfinder-flyer-fetch-manifest.json` to see which pages were fetched successfully.
-
-Dispatch subagents in **batches of 4–5** sources to avoid filling the main context with raw HTML.
-
-### 4.1: Dispatch Subagents in Parallel
-
-Use the **Agent tool** to spawn one subagent per batch simultaneously. Pass each subagent:
-- The list of sources with their HTML file paths from the manifest
-- The flyer extraction instructions from `src/templates/extract-flyers-from-markdown.md`
-- Today's date
-
-**Subagent prompt template**:
-```
-You are a grocery flyer scraper. Read each HTML file below and extract deals as JSON.
-
-Today's date: {TODAY}
-
-Sources to process:
-{SOURCE_LIST with html_file paths}
-
-For each source:
-1. Read the HTML file from /tmp
-2. Extract all deals from the page content using the flyer extraction template
-3. Return structured JSON
-
-Return a JSON object:
-{
-  "results": [
-    {
-      "source_id": 1,
-      "source_url": "https://...",
-      "success": true,
-      "error": null,
-      "store_name": "Real Canadian Superstore",
-      "sale_start": "2026-03-27",
-      "sale_end": "2026-04-02",
-      "items": [
-        {
-          "item_name": "Boneless Chicken Breast",
-          "brand": "Maple Leaf",
-          "description": "Family pack, ~1.5kg",
-          "sale_price": "$4.99/lb",
-          "regular_price": "$7.99/lb",
-          "unit": "/lb",
-          "category": "Meat & Seafood",
-          "item_url": null,
-          "image_url": null
-        }
-      ]
-    }
-  ]
-}
-
-Rules:
-- Return empty "items": [] if no deals found on a page
-- Parse prices carefully — handle "2 for $5", "$4.99/lb", "50% off", etc.
-- Detect flyer validity dates from page headers
-- Return only the JSON object, no other text
-```
-
-### 4.2: Collect and Write Batch Results
-
-Each subagent writes its results to `/tmp/eventfinder-flyer-batch-{N}.json`.
-
-Wait for all subagents to complete.
-
----
-
-## Step 5: Import Results
+## Step 4: Import Results
 
 Run the flyer import script:
 
@@ -128,13 +65,13 @@ Run the flyer import script:
 node scripts/import-flyer-results.js
 ```
 
-This deduplicates and imports all extracted deals into the `flyer_items` table, with each new item getting a `pending` entry in `sent_flyer_items`.
+This reads all `/tmp/eventfinder-flyer-batch-*.json` files (from both Flipp and Gmail), deduplicates them, and imports into the `flyer_items` table. Each new item gets a `pending` entry in `sent_flyer_items`.
 
 Note the import summary (new items, duplicates, failures).
 
 ---
 
-## Step 6: Generate Discord Digest
+## Step 5: Generate Discord Digest
 
 Query for all pending (unsent) flyer items:
 
@@ -142,16 +79,16 @@ Query for all pending (unsent) flyer items:
 node scripts/db-query.js "SELECT fi.*, s.name as store_name, sfi.id as sent_id FROM flyer_items fi JOIN sources s ON s.id = fi.source_id JOIN sent_flyer_items sfi ON sfi.flyer_item_id = fi.id WHERE sfi.status = 'pending' ORDER BY s.name, fi.category, fi.item_name"
 ```
 
-If **no pending items**: Skip to Step 9 and report "No new flyer deals to send."
+If **no pending items**: Skip to Step 8 and report "No new flyer deals to send."
 
-### 6.1: Group by Store, then Category
+### 5.1: Group by Store, then Category
 
 Organize deals hierarchically:
 1. Group by `store_name`
 2. Within each store, group by `category`
 3. Within each category, list items alphabetically
 
-### 6.2: Format Discord Messages
+### 5.2: Format Discord Messages
 
 Each message must be **<= 2000 characters** (Discord limit). Split across multiple messages if needed.
 
@@ -191,7 +128,7 @@ Each message must be **<= 2000 characters** (Discord limit). Split across multip
 
 ---
 
-## Step 7: Post to Discord
+## Step 6: Post to Discord
 
 Use the Bash tool to POST each message to the Discord flyers webhook:
 
@@ -209,11 +146,11 @@ fetch(url, {
 
 Post the header message first, then one message per store (splitting if over 2000 chars).
 
-**If `DISCORD_FLYERS_WEBHOOK_URL` is not set**: Skip this step, log a warning, continue to Step 8.
+**If `DISCORD_FLYERS_WEBHOOK_URL` is not set**: Skip this step, log a warning, continue to Step 7.
 
 ---
 
-## Step 8: Mark Items as Sent + Save Database
+## Step 7: Mark Items as Sent + Save Database
 
 After successful Discord post, mark all posted items as sent:
 
@@ -235,40 +172,36 @@ git push
 
 ---
 
-## Step 9: Report Summary
+## Step 8: Report Summary
 
 Display a summary:
 
 ```
 ✅ Flyer Discovery Complete
 
-Sources checked: 3
-  Succeeded: 3
-  Failed: 0
+Flipp API: 13 merchants fetched, 850 total items
+Gmail newsletters: 3 emails processed, 45 items extracted
 
-Deals extracted: 85
-  New: 42
-  Duplicates skipped: 43
+Import:
+  New items: 420
+  Duplicates skipped: 475
 
-Discord digest: ✅ posted (42 deals across 3 stores)
+Discord digest: ✅ posted (420 deals across 13 stores)
 
 Database committed to GitHub: ✅
-
-Failed sources (if any):
-  example.com/flyer: Timeout
 ```
 
 ---
 
 ## Error Handling
 
-**If source fetch fails**:
-- Log error to database
-- Continue to next source
+**If Flipp API fetch fails**:
+- Report error for that merchant
+- Continue to next merchant
 
-**If deal extraction fails**:
+**If Gmail reading fails**:
 - Log warning
-- Continue to next source
+- Continue (Flipp data is the primary source)
 
 **If Discord post fails**:
 - Report error clearly
@@ -282,10 +215,11 @@ Failed sources (if any):
 
 ## Notes
 
+- **Flipp API is the primary source**: Structured JSON, no auth, no browser needed. Covers all 13 configured stores.
+- **Gmail newsletters are supplemental**: May catch deals or store-specific promotions not in Flipp.
 - **No preference filtering**: All deals are posted (no relevance matching step)
 - **Group by store**: Deals are organized by store, then by category within each store
 - **Deduplication**: Items are hashed by name + brand + price + source + sale_end to avoid re-posting
-- **Historical data**: Old flyer items are kept in the database for historical lookups
 - **Separate channel**: Uses `DISCORD_FLYERS_WEBHOOK_URL` (not the events webhook)
 
 This is an **autonomous workflow**. Execute all steps without asking for confirmation unless you encounter an error you can't handle.
