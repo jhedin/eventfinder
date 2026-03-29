@@ -26,7 +26,7 @@ Postal code: `T3C 0W1`
 |---|-------|-----------|--------|-------|
 | 11 | No Frills | https://www.pcoptimum.ca/en/eflyers-subscription | PC Optimum eflyer form | Fields: province (AB), preferred flyer (No Frills), language (English), email, consent checkbox. No account, no CAPTCHA. Provincial level, not store-specific. JS-rendered — needs Browserless. |
 | 13 | Real Canadian Superstore | https://www.pcoptimum.ca/en/eflyers-subscription | PC Optimum eflyer form | Same form as No Frills — select "Real Canadian Superstore" as preferred flyer. Provincial (AB), not store-specific (no Deerfoot Meadows selection). |
-| 12 | Wholesale Club | https://www.pcoptimum.ca/en/eflyers-subscription | PC Optimum eflyer form (maybe) | `DigitalFlyerSubscriptions` flag DISABLED for Wholesale Club brand. May not appear in the banner dropdown. Try anyway — if not listed, no email option. 58th Avenue location. |
+| 12 | Wholesale Club | N/A | **No email option** | `DigitalFlyerSubscriptions` flag DISABLED. Not in PC Optimum eflyer dropdown. Only option is Flipp account alerts or direct scraping. 58th Avenue location. |
 | 5 | Save-On-Foods | https://www.flyerbox.ca/save-on-foods/ (or create account at secure.saveonfoods.com) | Account-gated or flyerbox.ca | Store = Mount Royal (RSID 1982, 906 16 Ave SW). No standalone email form — need Save-On-Foods or More Rewards account to get flyer emails directly. flyerbox.ca is the easy no-account alternative. Cloudflare blocks bots. |
 
 ### Likely No Email Subscription Available
