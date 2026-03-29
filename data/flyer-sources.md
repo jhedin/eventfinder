@@ -17,7 +17,7 @@ Postal code: `T3C 0W1`
 | # | Store | Signup URL | Method | Notes |
 |---|-------|-----------|--------|-------|
 | 2 | Safeway | https://www.safeway.ca/subscription | Gigya lite registration | Fields: email, first name, last name, postal code (T3C 0W1), 2 consent checkboxes. No CAPTCHA, no account needed. Postal code determines store flyer. Store #8812 = Westbrook area. JS-rendered (needs Browserless). |
-| 1 | Sobeys Liquor | https://liquor.sobeys.com/subscription/ or /register/ | Gigya (SAP) form | Same Gigya system as Safeway. Store ID 96924 = "Safeway Liquor Mission" at 504 Elbow Dr SW. JS-heavy. |
+| 1 | Sobeys Liquor | https://liquor.sobeys.com/subscription/ | Gigya lite registration | Same as Safeway. Fields: email, first/last name (optional), postal code (T3C 0W1), 2 checkboxes. No CAPTCHA. Store 96924 = Safeway Liquor Mission (504 Elbow Dr SW). **Bonus: auto-subscribes to ALL Sobeys banners (Safeway, FreshCo, etc.) on submit.** Needs Browserless. |
 | 3 | Canadian Tire | https://www.canadiantire.ca/en/triangle-loyalty-offers-program-registration.html | Email widget or Triangle account | Store #930 = Calgary Mount Royal (906 16 Ave SW). Simple email widget on loyalty page (no account needed), or full Triangle Rewards account for store-specific flyer. Akamai bot protection — needs Browserless. May need email verification. |
 
 ### Hard — JS-heavy, Cloudflare blocks, or Loblaw ecosystem
