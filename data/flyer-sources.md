@@ -27,7 +27,7 @@ Postal code: `T3C 0W1`
 | 11 | No Frills | Loblaw digital flyer subscription | Loblaw CIAM + Flipp | Has `DigitalFlyerSubscriptions` feature flag enabled. Needs PC/Loblaw account or Flipp integration. "By the Kirby Centre" location. |
 | 13 | Real Canadian Superstore | Loblaw digital flyer subscription | Loblaw CIAM + Flipp | Same Loblaw ecosystem as No Frills. `DigitalFlyerSubscriptions` flag found. Deerfoot Meadows location. |
 | 12 | Wholesale Club | Unknown | Loblaw ecosystem | `DigitalFlyerSubscriptions` flag DISABLED for this brand. May need PC Optimum email prefs. 58th Avenue location. |
-| 5 | Save-On-Foods | Unknown (blocked) | Cloudflare blocks | Entire site behind Cloudflare. RSID 1982. Needs Browserless to explore. |
+| 5 | Save-On-Foods | https://www.flyerbox.ca/save-on-foods/ (or create account at secure.saveonfoods.com) | Account-gated or flyerbox.ca | Store = Mount Royal (RSID 1982, 906 16 Ave SW). No standalone email form — need Save-On-Foods or More Rewards account to get flyer emails directly. flyerbox.ca is the easy no-account alternative. Cloudflare blocks bots. |
 
 ### Likely No Email Subscription Available
 
