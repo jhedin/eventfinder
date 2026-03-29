@@ -50,7 +50,7 @@ Keep these preferences in mind throughout the workflow.
 Run the following query using `node scripts/db-query.js`:
 
 ```bash
-node scripts/db-query.js "SELECT id, url, name, description FROM sources WHERE active = 1 ORDER BY last_checked_at ASC"
+node scripts/db-query.js "SELECT id, url, name, description FROM sources WHERE active = 1 AND type = 'event' ORDER BY last_checked_at ASC"
 ```
 
 This gives you the websites to check for events.
@@ -61,7 +61,7 @@ This gives you the websites to check for events.
 
 **If the Gmail connector is available**, read unread venue newsletters:
 
-1. Search for unread emails: `is:unread newer_than:2d`
+1. Search for unread emails: `is:unread newer_than:2d -to:j.hedin.open.claw+flyers@gmail.com`
 2. For each email: extract the plain text body
 3. Pass the body through the same event extraction process as Step 3.2 (treat it like markdown from a website)
 4. Mark each email as read after processing
