@@ -21,15 +21,27 @@ Read the output file and report how many items were fetched per store.
 
 ## Phase 2: Classify
 
-Process the raw items from Phase 1. For each store's items:
+Read `data/flyer-preferences.md` first. This tells you:
+- **Staples** they always want to see when on sale (these get top priority)
+- **Dietary** restrictions (skip items that don't apply)
+- **Categories** they care about vs ones to skip
+- What they consider a **good deal**
 
-**Filter:** Drop non-grocery items. Canadian Tire, London Drugs, Costco, and Shoppers flyers are mostly non-food — be aggressive. Keep only food, drinks, and alcohol.
+Then process the raw items from Phase 1:
 
-**Deduplicate:** Safeway and Sobeys are the same company with identical flyers. Keep one (label as "Safeway", drop Sobeys). Same for any other duplicates across stores.
+**Filter:** Drop anything the preferences say to skip (non-food, alcohol if not wanted, baby products, etc.). Canadian Tire, London Drugs, Costco, and Shoppers flyers are mostly non-food — be aggressive.
+
+**Deduplicate:** Safeway and Sobeys are the same company with identical flyers. Keep one (label as "Safeway", drop Sobeys). When multiple stores carry the same item, show the best price and mention alternatives: `Chicken Breast — **$6.88** @ Superstore (also $6.99 @ Co-op)`.
 
 **Categorize** each remaining item into: Meat & Seafood, Produce, Dairy, Bakery, Frozen, Pantry, Beverages.
 
-**Rank:** Prefer items with `original_price` (showing real savings) or a `discount` percentage. For stores with many items, keep the best 20-40 deals — biggest discounts, most useful staples.
+**Rank by relevance:**
+1. Staples from preferences that are on sale (always include these)
+2. Biggest discount % on items with visible `original_price`
+3. Good deals on everyday items the household would use
+4. Skip niche/specialty items unless the discount is exceptional
+
+**Cap:** ~15-20 items per category max. This is a digest, not a catalog.
 
 Write the curated results to `/tmp/eventfinder-flyer-curated.json`:
 ```json
@@ -54,7 +66,35 @@ Report a summary: how many items kept vs dropped per store, total per category.
 
 Read `/tmp/eventfinder-flyer-curated.json` and post to Discord.
 
-Use **embeds** — one per category:
+### Posting Order (top = lowest priority, bottom = highest)
+
+Discord shows the bottom of a channel first. Post in this order so the most important content is what the user sees first:
+
+1. **Header message** (top): `🛒 **Flyer Deals** — {n} deals from {n} stores · {date}`
+2. **Low-priority categories**: 🥤 Beverages, 🥫 Pantry, 🍞 Bakery, 🧊 Frozen
+3. **Mid-priority categories**: 🧀 Dairy, 🥬 Produce
+4. **High-priority category**: 🥩 Meat & Seafood
+5. **Highlights embed** (bottom — seen first): The best preference-matching deals
+
+### Highlights Embed
+
+The final embed should be a **⭐ Highlights** section — the 5-10 best deals that match the user's staples list from `data/flyer-preferences.md`. These are the "don't miss" items: deepest discounts on things they actually buy regularly.
+
+```json
+{
+  "embeds": [{
+    "title": "⭐ Highlights — This Week's Best Deals",
+    "color": 16766720,
+    "description": "• Chicken Breast — **$4.99/lb** @ Safeway ~~$7.99~~ (37% off)\n• Butter — **$3.99** @ No Frills ~~$5.99~~ (33% off)\n• Eggs — **$3.25/dz** @ Shoppers ~~$4.99~~ (35% off)"
+  }]
+}
+```
+
+Include the discount % in highlights to make the savings obvious.
+
+### Category Embeds
+
+Use one embed per category:
 
 ```json
 {
@@ -66,8 +106,6 @@ Use **embeds** — one per category:
 }
 ```
 
-- Post header first: `🛒 **Flyer Deals** — {n} deals from {n} stores · {date}`
-- Category emojis: 🥩 Meat & Seafood, 🥬 Produce, 🧀 Dairy, 🍞 Bakery, 🧊 Frozen, 🥫 Pantry, 🥤 Beverages
 - Bold sale price, strikethrough original, `@ Store` tag, `(Brand)` if helpful
 - Max 10 embeds per message, 4096 chars per embed description — split across messages if needed
 
