@@ -1,22 +1,6 @@
-# Add Source Command
+# Add Source
 
-Add a single event website or calendar to your monitoring list.
-
-## Workflow
-
-1. **Prompt for URL** if not provided
-2. **Test the URL:**
-   - Fetch the page using Playwright MCP
-   - Convert to markdown
-   - Attempt to extract events using LLM
-3. **Show preview:**
-   - Display number of events found
-   - Show sample events (first 3)
-4. **Confirm to add:**
-   - Ask user if they want to add this source
-5. **Add to sources.json:**
-   - Append new source to the list
-   - Include metadata: URL, name (auto-detected or user-provided), date added
+Add a new event website to the EventFinder monitoring list.
 
 ## Usage
 
@@ -25,26 +9,81 @@ With URL:
 /add-source https://example.com/events
 ```
 
-Interactive:
+Interactive (will prompt for URL):
 ```
 /add-source
 ```
-(Will prompt for URL)
 
-## Output
+## Workflow
+
+### Step 1: Get the URL
+
+If no URL was provided, ask the user for one now.
+
+### Step 2: Check for duplicates
+
+```bash
+node scripts/db-query.js "SELECT id, url, name, active FROM sources WHERE url = ?" '"<url>"'
+```
+
+If already exists: tell the user and stop.
+
+### Step 3: Fetch and preview the page
+
+```bash
+node scripts/fetch-page.js "<url>" > /tmp/add-source-preview.html 2>&1 && echo "OK" || echo "FAILED"
+```
+
+Read the HTML and extract a sample of events (up to 5). Show the user:
 
 ```
 Testing: https://example.com/events
-✓ Found 12 events
+✓ Fetched successfully
 
-Sample events:
+Sample events found:
 - Oct 15: Jazz Night with The Quartet
 - Oct 18: Comedy Show featuring Local Comics
 - Oct 22: Art Exhibition Opening
 
-Add this source? (yes/no): yes
+Detected name: Example Venue Events
+```
 
-✓ Added to sources.json
-Source name: Example Venue Events
-Total sources: 15
+If the page fetches but looks like a JS-only shell (no events visible), note that Browserless.io will be used during actual runs to render JavaScript.
+
+If the fetch fails entirely, report the error and ask the user if they still want to add it.
+
+### Step 4: Confirm
+
+Ask: "Add this source? (yes/no)"
+
+If no: stop.
+
+### Step 5: Add to database
+
+Auto-detect a short venue name from the page title or domain if not obvious. Ask the user to confirm or provide a name.
+
+```bash
+node scripts/db-query.js "INSERT INTO sources (url, name, description, active) VALUES (?, ?, ?, 1) RETURNING id" '"<url>"' '"<name>"' '"<description_or_empty>"'
+```
+
+Then commit the updated DB to GitHub:
+
+```bash
+git config user.email "eventfinder-bot@users.noreply.github.com"
+git config user.name "EventFinder Bot"
+git add data/eventfinder.db
+git commit -m "chore: add source <name> [skip ci]"
+git pull origin main --no-rebase -X ours
+git push origin HEAD:main
+```
+
+### Step 6: Confirm
+
+```
+✓ Added: <name>
+   URL: <url>
+   ID: <id>
+   Total active sources: <count>
+
+This site will be checked in the next discovery run.
 ```

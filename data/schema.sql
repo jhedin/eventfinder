@@ -26,12 +26,16 @@ CREATE TABLE sources (
   error_message TEXT,                 -- Full error details for debugging
   error_type TEXT,                    -- 'timeout', '404', '500', 'parse_error', 'ssl_error', 'no_events', etc.
 
+  -- Source type
+  type TEXT NOT NULL DEFAULT 'event' CHECK (type IN ('event', 'flyer')),
+
   -- Constraints
   CHECK (active IN (0, 1))
 );
 
 CREATE INDEX idx_sources_active ON sources(active);
 CREATE INDEX idx_sources_last_checked ON sources(last_checked_at);
+CREATE INDEX idx_sources_type ON sources(type);
 
 -- =============================================================================
 -- EVENTS: Discovered events with base information
@@ -204,6 +208,114 @@ JOIN sources s ON s.id = e.source_id
 WHERE se.status = 'sent'
   AND se.sent_at = (SELECT MAX(sent_at) FROM sent_events WHERE status = 'sent')
 ORDER BY ei.instance_date;
+
+-- =============================================================================
+-- FULL-TEXT SEARCH (FTS5)
+-- =============================================================================
+-- Content table referencing events; triggers keep index in sync.
+-- Porter stemmer: "jazz" matches "jazzy", "perform" matches "performance", etc.
+
+CREATE VIRTUAL TABLE events_fts USING fts5(
+  title,
+  description,
+  venue,
+  content='events',
+  content_rowid='id',
+  tokenize='porter unicode61'
+);
+
+-- Populate index from existing rows (no-op on fresh DB)
+INSERT INTO events_fts(events_fts) VALUES('rebuild');
+
+-- Keep index in sync with events table
+CREATE TRIGGER events_ai AFTER INSERT ON events BEGIN
+  INSERT INTO events_fts(rowid, title, description, venue)
+  VALUES (new.id, new.title, new.description, new.venue);
+END;
+
+CREATE TRIGGER events_ad AFTER DELETE ON events BEGIN
+  INSERT INTO events_fts(events_fts, rowid, title, description, venue)
+  VALUES ('delete', old.id, old.title, old.description, old.venue);
+END;
+
+CREATE TRIGGER events_au AFTER UPDATE ON events BEGIN
+  INSERT INTO events_fts(events_fts, rowid, title, description, venue)
+  VALUES ('delete', old.id, old.title, old.description, old.venue);
+  INSERT INTO events_fts(rowid, title, description, venue)
+  VALUES (new.id, new.title, new.description, new.venue);
+END;
+
+-- =============================================================================
+-- FLYER_ITEMS: Grocery deals extracted from flyer pages
+-- =============================================================================
+
+CREATE TABLE flyer_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+  -- Identity (for duplicate detection)
+  item_hash TEXT NOT NULL UNIQUE,       -- hash(item_name + brand + sale_price + source_id + sale_end)
+
+  -- Item info
+  item_name TEXT NOT NULL,              -- "Boneless Chicken Breast"
+  brand TEXT,                           -- "Maple Leaf", etc.
+  description TEXT,                     -- "Family pack, ~1.5kg"
+
+  -- Pricing
+  sale_price TEXT NOT NULL,             -- "$4.99/lb", "2 for $5", "50% off"
+  regular_price TEXT,                   -- "$7.99/lb" (null if unknown)
+  unit TEXT,                            -- "/lb", "/kg", "/ea", "/100g"
+
+  -- Categorization
+  category TEXT,                        -- "Produce", "Meat & Seafood", "Dairy", etc.
+
+  -- Validity period
+  sale_start DATE,                      -- Flyer validity start
+  sale_end DATE,                        -- Flyer validity end
+
+  -- URLs
+  item_url TEXT,                        -- Link to the item or flyer page
+  image_url TEXT,                       -- Product image
+
+  -- Source tracking
+  source_id INTEGER NOT NULL,
+  source_url TEXT NOT NULL,
+
+  -- Discovery tracking
+  discovered_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+  -- Foreign keys
+  FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_flyer_items_hash ON flyer_items(item_hash);
+CREATE INDEX idx_flyer_items_source ON flyer_items(source_id);
+CREATE INDEX idx_flyer_items_sale_end ON flyer_items(sale_end);
+CREATE INDEX idx_flyer_items_discovered ON flyer_items(discovered_at);
+CREATE INDEX idx_flyer_items_category ON flyer_items(category);
+
+-- =============================================================================
+-- SENT_FLYER_ITEMS: Track which flyer deals we've posted to Discord
+-- =============================================================================
+
+CREATE TABLE sent_flyer_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+  -- Which flyer item
+  flyer_item_id INTEGER NOT NULL,
+
+  -- Sent tracking
+  sent_at TIMESTAMP,
+  status TEXT NOT NULL DEFAULT 'pending',  -- 'pending', 'sent', 'skipped'
+
+  -- Foreign keys
+  FOREIGN KEY (flyer_item_id) REFERENCES flyer_items(id) ON DELETE CASCADE,
+
+  -- Constraints
+  CHECK (status IN ('pending', 'sent', 'skipped'))
+);
+
+CREATE UNIQUE INDEX idx_sent_flyer_items_unique ON sent_flyer_items(flyer_item_id);
+CREATE INDEX idx_sent_flyer_items_status ON sent_flyer_items(status);
 
 -- =============================================================================
 -- INITIAL DATA

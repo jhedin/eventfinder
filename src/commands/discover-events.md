@@ -4,6 +4,22 @@
 
 ---
 
+## ⚠️ Resuming a Previous Session
+
+If this session is continuing a previous interrupted run, **do not write ad-hoc scripts**. Instead:
+
+1. Check DB state to determine where the workflow left off:
+   ```bash
+   node scripts/db-query.js "SELECT COUNT(*) as events FROM events"
+   node scripts/db-query.js "SELECT COUNT(*) as pending FROM sent_events WHERE status = 'pending'"
+   ```
+2. If there are pending events → jump directly to **Step 6** (Generate Discord Digest)
+3. If there are no pending events → run the full workflow from Step 1
+
+**Always follow this workflow in full, even during recovery.** Do not skip steps or implement partial versions. The workflow already handles: Google Calendar links, proper Discord formatting, currency symbols, curl usage — do not re-implement these.
+
+---
+
 ## Step 0: Install Dependencies
 
 Run this first to ensure Node dependencies are available:
@@ -34,7 +50,7 @@ Keep these preferences in mind throughout the workflow.
 Run the following query using `node scripts/db-query.js`:
 
 ```bash
-node scripts/db-query.js "SELECT id, url, name, description FROM sources WHERE active = 1 ORDER BY last_checked_at ASC"
+node scripts/db-query.js "SELECT id, url, name, description FROM sources WHERE active = 1 AND type = 'event' ORDER BY last_checked_at ASC"
 ```
 
 This gives you the websites to check for events.
@@ -45,7 +61,7 @@ This gives you the websites to check for events.
 
 **If the Gmail connector is available**, read unread venue newsletters:
 
-1. Search for unread emails: `is:unread newer_than:2d`
+1. Search for unread emails: `is:unread newer_than:2d -to:j.hedin.open.claw+flyers@gmail.com`
 2. For each email: extract the plain text body
 3. Pass the body through the same event extraction process as Step 3.2 (treat it like markdown from a website)
 4. Mark each email as read after processing
@@ -181,22 +197,25 @@ For each unreviewed event, decide if it matches user interests based on `data/us
 - "Blue Note" / "jazz club" = jazz music
 - Workshop at craft store = hands-on class
 
-For each event, record your decision with:
+After assessing ALL events, record every decision in **one batch command**:
 
 ```bash
-node scripts/record-relevance.js <event_id> <status> "<reason>"
+node scripts/record-relevance-batch.js /tmp/relevance-decisions.json
+```
+
+Write `/tmp/relevance-decisions.json` first (using the Write tool), then run the command. Format:
+
+```json
+[
+  {"event_id": 42, "status": "pending", "reason": "Jazz quartet at intimate venue — matches jazz interest"},
+  {"event_id": 43, "status": "excluded", "reason": "Heavy metal festival — explicitly excluded"}
+]
 ```
 
 - `status`: `pending` (matches) or `excluded` (does not match)
 - `reason`: one sentence explanation
 
-Examples:
-```bash
-node scripts/record-relevance.js 42 pending "Jazz quartet at intimate venue — matches jazz interest"
-node scripts/record-relevance.js 43 excluded "Heavy metal festival — explicitly excluded"
-```
-
-This script is safe to re-run — it skips events already assessed.
+This script is safe to re-run — it skips events already assessed. **Do not run record-relevance.js once per event** — always use the batch script.
 
 ---
 
@@ -267,10 +286,16 @@ Only include fields that are available (skip null fields). Always include 📆. 
 
 Use the Bash tool to POST each category message to the Discord webhook using `curl`. **Always use curl — do not use Node.js fetch, which times out in this environment.**
 
+**Always write the JSON body to a temp file** — never inline it in the shell command. Inlining breaks `$` signs (prices like `$25` become empty strings) and single quotes in content.
+
 ```bash
+# Write message to temp file first (preserves $, quotes, special chars)
+node -e "require('fs').writeFileSync('/tmp/discord_msg.json', JSON.stringify({content: process.argv[1]}))" "<message>"
+
+# Then post it
 curl -s -o /dev/null -w "%{http_code}" \
   -H "Content-Type: application/json" \
-  -d '{"content": "<message>"}' \
+  -d @/tmp/discord_msg.json \
   "$DISCORD_WEBHOOK_URL"
 ```
 
