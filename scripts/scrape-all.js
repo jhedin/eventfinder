@@ -49,7 +49,11 @@ const sourceType = process.argv.find(a => a.startsWith('--type='))?.split('=')[1
 const filePrefix = sourceType === 'flyer' ? 'eventfinder-flyer' : 'eventfinder';
 
 const db = new Database(DB_PATH);
-const sources = db.prepare('SELECT id, url, name FROM sources WHERE active = 1 AND type = ? ORDER BY last_checked_at ASC').all(sourceType);
+// Check if 'type' column exists (it may not in older DB schemas)
+const hasTypeColumn = db.prepare("PRAGMA table_info(sources)").all().some(col => col.name === 'type');
+const sources = hasTypeColumn
+  ? db.prepare('SELECT id, url, name FROM sources WHERE active = 1 AND type = ? ORDER BY last_checked_at ASC').all(sourceType)
+  : db.prepare('SELECT id, url, name FROM sources WHERE active = 1 ORDER BY last_checked_at ASC').all();
 db.close();
 
 console.log(`Fetching ${sources.length} active ${sourceType} sources (Browserless.io: ${token ? 'YES' : 'NO — plain curl fallback'})...\n`);
