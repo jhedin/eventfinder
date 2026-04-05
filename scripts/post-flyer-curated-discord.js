@@ -9,7 +9,7 @@
  * Splits into multiple messages if needed.
  */
 
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { setGlobalDispatcher, ProxyAgent } from 'undici';
 
 const proxyUrl = process.env.https_proxy || process.env.HTTPS_PROXY ||
@@ -19,7 +19,38 @@ if (proxyUrl) {
 }
 
 const INPUT       = '/tmp/eventfinder-flyer-curated.json';
+const BATCH_INPUT = '/tmp/eventfinder-flyer-batch-flipp.json';
 const WEBHOOK_URL = process.env.DISCORD_FLYERS_WEBHOOK_URL;
+
+// Store display name → sale_end (loaded from batch file if available)
+const STORE_NAME_MAP = {
+  'Co-op':          'Calgary Co-op',
+  'Safeway':        'Safeway',
+  'Superstore':     'Real Canadian Superstore',
+  'No Frills':      'No Frills',
+  'Wholesale Club': 'Wholesale Club',
+  'T&T':            'T&T Supermarket',
+};
+const storeSaleEnd = {};
+if (existsSync(BATCH_INPUT)) {
+  const batch = JSON.parse(readFileSync(BATCH_INPUT, 'utf8'));
+  for (const store of batch) {
+    storeSaleEnd[store.store_name] = store.sale_end || null;
+  }
+}
+
+function getSaleEnd(displayName) {
+  const batchName = STORE_NAME_MAP[displayName] || displayName;
+  return storeSaleEnd[batchName] || null;
+}
+
+function formatSaleEnd(displayName) {
+  const end = getSaleEnd(displayName);
+  if (!end) return '';
+  // Format "2026-04-08" → "Apr 8"
+  const d = new Date(end + 'T12:00:00');
+  return ' · until ' + d.toLocaleDateString('en-CA', { month: 'short', day: 'numeric' });
+}
 
 const CATEGORY_EMOJI = {
   'Meat & Seafood': '🥩',
@@ -54,7 +85,8 @@ function formatLine(item) {
   const origPart   = item.original_price ? ` ~~${item.original_price}~~` : '';
   const brandPart  = item.brand  ? ` *(${item.brand})*`         : '';
   const storePart  = ` @ ${item.store}`;
-  return `• ${namePart}${brandPart} — ${pricePart}${origPart}${storePart}`;
+  const datePart   = formatSaleEnd(item.store);
+  return `• ${namePart}${brandPart} — ${pricePart}${origPart}${storePart}${datePart}`;
 }
 
 function chunkEmbed(title, color, lines, maxChars = 4000) {
