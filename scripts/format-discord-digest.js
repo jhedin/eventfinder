@@ -1,282 +1,221 @@
+#!/usr/bin/env node
+
 import fs from 'fs';
 
-// Music keywords for categorization
-const MUSIC_KEYWORDS = [
-  'concert', 'band', 'music', 'jazz', 'blues', 'rock', 'pop', 'hip-hop', 'hiphop',
-  'folk', 'country', 'reggae', 'metal', 'electronic', 'dj', 'live music', 'performer',
-  'singer', 'artist', 'album', 'tour', 'festival', 'session', 'jam session'
-];
+// Read events data from stdin
+let input = '';
+process.stdin.on('data', chunk => input += chunk);
+process.stdin.on('end', () => {
+  try {
+    const events = JSON.parse(input);
+    const digest = formatDiscordDigest(events);
+    fs.writeFileSync('/tmp/discord-digest.json', JSON.stringify(digest, null, 2));
+    console.log(`Digest formatted: ${digest.total_events} events, ${digest.messages.length} messages. Written to /tmp/discord-digest.json`);
+  } catch (err) {
+    console.error('Error formatting digest:', err.message);
+    process.exit(1);
+  }
+});
 
-const ARTS_KEYWORDS = [
-  'gallery', 'exhibition', 'exhibit', 'art', 'theater', 'theatre', 'play', 'film',
-  'cinema', 'movie', 'poetry', 'reading', 'literary', 'dance', 'ballet', 'opera',
-  'talk', 'lecture', 'discussion', 'panel', 'screening'
-];
+function formatDiscordDigest(events) {
+  if (!Array.isArray(events) || events.length === 0) {
+    return {
+      total_events: 0,
+      instance_ids: [],
+      messages: ["🗓️ **EventFinder Digest** — No new events · April 5, 2026"]
+    };
+  }
 
-const WORKSHOP_KEYWORDS = [
-  'workshop', 'class', 'course', 'lesson', 'training', 'session', 'tutorial',
-  'seminar', 'craft', 'hands-on', 'learn', 'instruction', 'masterclass', 'webinar'
-];
+  const instanceIds = events.map(e => e.instance_id);
+  const categorized = categorizeEvents(events);
 
-function categorizeEvent(event) {
-  const text = `${event.title} ${event.description || ''}`.toLowerCase();
+  const messages = [];
 
-  // Check for music keywords
-  for (const keyword of MUSIC_KEYWORDS) {
-    if (text.includes(keyword)) {
-      return 'music';
+  // Header
+  messages.push(`🗓️ **EventFinder Digest** — ${events.length} new events · April 5, 2026`);
+
+  // Categories in order
+  const categoryOrder = ['🎵 Music', '🎨 Arts & Culture', '🛠️ Workshops', '📅 Other'];
+  for (const categoryLabel of categoryOrder) {
+    const category = categoryLabel.split(' ')[1];
+    if (!categorized[category] || categorized[category].length === 0) continue;
+
+    const catEvents = categorized[category];
+    const categoryMessages = [];
+    const categoryHeader = `${categoryLabel} — ${catEvents.length} new event${catEvents.length !== 1 ? 's' : ''}`;
+    categoryMessages.push(categoryHeader);
+
+    for (const event of catEvents) {
+      const eventStr = formatEvent(event, category);
+      const lastMsg = categoryMessages[categoryMessages.length - 1];
+
+      // Check if adding this event exceeds 1950 char limit
+      if ((lastMsg + '\n\n' + eventStr).length > 1950) {
+        // Push current accumulated message
+        messages.push(categoryMessages.join('\n\n'));
+        // Start new message with category header
+        categoryMessages.length = 0;
+        categoryMessages.push(categoryHeader);
+      }
+      categoryMessages.push(eventStr);
+    }
+
+    // Push final category message
+    if (categoryMessages.length > 1) {
+      messages.push(categoryMessages.join('\n\n'));
     }
   }
 
-  // Check for arts keywords
-  for (const keyword of ARTS_KEYWORDS) {
-    if (text.includes(keyword)) {
-      return 'arts';
+  return {
+    total_events: events.length,
+    instance_ids: instanceIds,
+    messages
+  };
+}
+
+function categorizeEvents(events) {
+  const categorized = {
+    'Music': [],
+    'Arts & Culture': [],
+    'Workshops': [],
+    'Other': []
+  };
+
+  const musicKeywords = ['jazz', 'concert', 'band', 'live music', 'indie performance', 'performance program'];
+  const artsKeywords = ['theatre', 'theater', 'gallery', 'film', 'poetry', 'talk', 'dance', 'opera'];
+  const workshopsKeywords = ['workshop', 'class', 'carving', 'hands-on', 'craft'];
+
+  for (const event of events) {
+    const title = (event.title || '').toLowerCase();
+    const desc = (event.description || '').toLowerCase();
+    const combined = title + ' ' + desc;
+
+    let category = 'Other';
+
+    if (musicKeywords.some(kw => combined.includes(kw))) {
+      category = 'Music';
+    } else if (artsKeywords.some(kw => combined.includes(kw))) {
+      category = 'Arts & Culture';
+    } else if (workshopsKeywords.some(kw => combined.includes(kw))) {
+      category = 'Workshops';
     }
+
+    categorized[category].push(event);
   }
 
-  // Check for workshop keywords
-  for (const keyword of WORKSHOP_KEYWORDS) {
-    if (text.includes(keyword)) {
-      return 'workshop';
-    }
-  }
-
-  return 'other';
-}
-
-function formatTime(timeStr) {
-  if (!timeStr) return null;
-  const [hours, minutes] = timeStr.split(':');
-  const hour = parseInt(hours);
-  const min = parseInt(minutes);
-
-  let period = 'AM';
-  let displayHour = hour;
-
-  if (hour >= 12) {
-    period = 'PM';
-    if (hour > 12) displayHour = hour - 12;
-  } else if (hour === 0) {
-    displayHour = 12;
-  }
-
-  return `${displayHour}:${String(min).padStart(2, '0')} ${period}`;
-}
-
-function formatDate(dateStr) {
-  if (!dateStr) return null;
-  const date = new Date(dateStr + 'T00:00:00');
-  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const day = days[date.getUTCDay()];
-  const dateNum = date.getUTCDate();
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const month = months[date.getUTCMonth()];
-
-  return { day, month, dateNum };
-}
-
-function buildGoogleCalendarURL(event) {
-  const dateStr = event.instance_date;
-  const timeStr = formatTime(event.instance_time);
-
-  let startDate, endDate;
-  if (timeStr) {
-    // Time is known, use YYYYMMDDTHHmmSS format
-    const [year, month, day] = dateStr.split('-');
-    const [displayHour, minPeriod] = timeStr.split(':');
-    const minutes = minPeriod.split(' ')[0];
-    const period = minPeriod.split(' ')[1];
-    let hour = parseInt(displayHour);
-    if (period === 'PM' && hour !== 12) hour += 12;
-    if (period === 'AM' && hour === 12) hour = 0;
-
-    startDate = `${year}${month}${day}T${String(hour).padStart(2, '0')}${minutes}00`;
-    const endHour = (hour + 2) % 24;
-    endDate = `${year}${month}${day}T${String(endHour).padStart(2, '0')}${minutes}00`;
-  } else {
-    // No time, use YYYYMMDD/YYYYMMDD format
-    const [year, month, day] = dateStr.split('-');
-    startDate = `${year}${month}${day}`;
-    endDate = `${year}${month}${day}`;
-  }
-
-  const text = encodeURIComponent(event.title);
-  const details = event.event_url ? encodeURIComponent(event.event_url) : '';
-  const location = encodeURIComponent(event.venue || '');
-
-  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${startDate}/${endDate}&details=${details}&location=${location}`;
-}
-
-function buildTicketSaleCalendarURL(event) {
-  if (!event.ticket_sale_date) return null;
-
-  const [year, month, day] = event.ticket_sale_date.split('-');
-  const startDate = `${year}${month}${day}`;
-  const endDate = `${year}${month}${day}`;
-
-  const text = encodeURIComponent(`🎫 Tickets on sale: ${event.title}`);
-  const location = encodeURIComponent(event.venue || '');
-
-  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${startDate}/${endDate}&location=${location}`;
-}
-
-function buildYouTubeSearchURL(artistName) {
-  return `https://www.youtube.com/results?search_query=${encodeURIComponent(artistName)}`;
-}
-
-function formatEventLine(event) {
-  const dateObj = formatDate(event.instance_date);
-  const timeStr = formatTime(event.instance_time);
-
-  let dateTime = `${dateObj.day} ${dateObj.month} ${dateObj.dateNum}`;
-  if (timeStr) {
-    dateTime += ` at ${timeStr}`;
-  }
-
-  let line = `📅 ${dateTime}`;
-
-  if (event.venue) {
-    line += ` · 📍 ${event.venue}`;
-  }
-
-  if (event.price) {
-    line += ` · 💰 ${event.price}`;
-  }
-
-  return line;
+  return categorized;
 }
 
 function formatEvent(event, category) {
-  const lines = [];
-  lines.push(`**${event.title}**`);
+  let result = `**${event.title}**\n`;
 
-  // Main event details line
-  lines.push(formatEventLine(event));
+  const parts = [];
 
-  // Build links line
-  const links = [];
+  // Date and time
+  const dateStr = formatDate(event.instance_date, event.instance_time);
+  parts.push(`📅 ${dateStr}`);
 
-  // Add ticket URL if available (and different from event_url)
+  // Venue
+  if (event.venue) {
+    parts.push(`📍 ${event.venue}`);
+  }
+
+  // Price
+  if (event.price) {
+    parts.push(`💰 ${event.price}`);
+  }
+
+  result += parts.join(' · ');
+  result += '\n';
+
+  // Links and actions
+  const actions = [];
+
+  // Ticket URL (if different from event_url)
   if (event.ticket_url && event.ticket_url !== event.event_url) {
-    links.push(`🎫 [Tickets](${event.ticket_url})`);
+    actions.push(`🎫 <${event.ticket_url}>`);
   }
 
-  // Add event URL
+  // Event URL
   if (event.event_url) {
-    links.push(`🔗 [Event](${event.event_url})`);
+    actions.push(`🔗 <${event.event_url}>`);
   }
 
-  // Add calendar link
-  const calendarURL = buildGoogleCalendarURL(event);
-  links.push(`[📆 Add event](${calendarURL})`);
+  // Add to calendar
+  const calendarUrl = buildGoogleCalendarUrl(event);
+  actions.push(`📆 <${calendarUrl}>`);
 
-  // Add ticket sale date link
+  // Listen (music only)
+  if (category === 'Music') {
+    const youtubeUrl = buildYoutubeSearchUrl(event.title);
+    actions.push(`🎧 <${youtubeUrl}>`);
+  }
+
+  // Ticket sale date
   if (event.ticket_sale_date) {
-    const ticketSaleURL = buildTicketSaleCalendarURL(event);
-    const saleDate = formatDate(event.ticket_sale_date);
-    links.push(`[🔔 Tickets ${saleDate.month} ${saleDate.dateNum}](${ticketSaleURL})`);
+    actions.push(`🔔 Tickets on sale ${formatDate(event.ticket_sale_date, event.ticket_sale_time)}`);
   }
 
-  // Add YouTube search for music events
-  if (category === 'music') {
-    const youtubeURL = buildYouTubeSearchURL(event.title);
-    links.push(`[🎧 Listen](${youtubeURL})`);
+  if (actions.length > 0) {
+    result += actions.join(' · ');
   }
 
-  lines.push(links.join(' · '));
-
-  return lines.join('\n');
+  return result;
 }
 
-function createCategoryMessages(events, category) {
-  const categoryEmoji = category === 'music' ? '🎵' :
-                       category === 'arts' ? '🎨' :
-                       category === 'workshop' ? '🛠️' : '📅';
+function formatDate(dateStr, timeStr) {
+  if (!dateStr) return '';
 
-  const categoryDisplay = category === 'music' ? 'Music' :
-                         category === 'arts' ? 'Arts & Culture' :
-                         category === 'workshop' ? 'Workshops' : 'Other';
+  const date = new Date(dateStr + 'T00:00:00');
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
-  const header = `${categoryEmoji} **${categoryDisplay}** — ${events.length} new event${events.length !== 1 ? 's' : ''}`;
+  const dayName = dayNames[date.getUTCDay()];
+  const day = date.getUTCDate();
+  const month = monthNames[date.getUTCMonth()];
 
-  const eventTexts = events.map(e => formatEvent(e, category));
+  let result = `${dayName} ${month} ${day}`;
 
-  // Build messages respecting 1950 char limit
-  const messages = [];
-  let current = header;
-
-  for (const eventText of eventTexts) {
-    const candidate = current + '\n\n' + eventText;
-    if (candidate.length > 1950) {
-      messages.push(current);
-      current = `${categoryEmoji} **${categoryDisplay}** (continued)\n\n${eventText}`;
-    } else {
-      current = candidate;
-    }
+  // Add time if present and not 00:00:00
+  if (timeStr && timeStr !== '00:00:00') {
+    const [hours, minutes] = timeStr.split(':');
+    let hour = parseInt(hours, 10);
+    const ampm = hour >= 12 ? 'PM' : 'AM';
+    hour = hour % 12 || 12;
+    const min = parseInt(minutes, 10);
+    result += ` at ${hour}:${min.toString().padStart(2, '0')} ${ampm}`;
   }
 
-  if (current !== header) {
-    messages.push(current);
-  }
-
-  return messages;
+  return result;
 }
 
-// Main execution
-try {
-  const data = JSON.parse(fs.readFileSync('/tmp/pending-events.json', 'utf8'));
+function buildGoogleCalendarUrl(event) {
+  const title = encodeURIComponent(event.title);
+  const venue = encodeURIComponent(event.venue || '');
+  const eventUrl = encodeURIComponent(event.event_url || '');
 
-  if (!Array.isArray(data) || data.length === 0) {
-    console.log('No pending events found');
-    fs.writeFileSync('/tmp/discord-digest.json', JSON.stringify({
-      total_events: 0,
-      instance_ids: [],
-      messages: []
-    }, null, 2));
-    process.exit(0);
+  // Build dates in YYYYMMDDTHHMMSS format
+  const date = event.instance_date.replace(/-/g, '');
+  let startTime = '000000';
+  let endTime = '020000'; // Default 2 hours later
+
+  if (event.instance_time && event.instance_time !== '00:00:00') {
+    const [h, m, s] = event.instance_time.split(':');
+    startTime = h + m + s;
+    const endHour = (parseInt(h, 10) + 2) % 24;
+    endTime = endHour.toString().padStart(2, '0') + m + s;
   }
 
-  // Categorize events
-  const categorized = {
-    music: [],
-    arts: [],
-    workshop: [],
-    other: []
-  };
+  const start = `${date}T${startTime}`;
+  const end = `${date}T${endTime}`;
+  const dates = `${start}/${end}`;
 
-  const instanceIds = [];
+  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${dates}&details=${eventUrl}&location=${venue}`;
+}
 
-  for (const event of data) {
-    const category = categorizeEvent(event);
-    categorized[category].push(event);
-    instanceIds.push(event.instance_id);
-  }
-
-  // Format messages for each category
-  const allMessages = [];
-  const categoryOrder = ['music', 'arts', 'workshop', 'other'];
-
-  for (const category of categoryOrder) {
-    const events = categorized[category];
-    if (events.length === 0) continue;
-
-    const messages = createCategoryMessages(events, category);
-    allMessages.push(...messages);
-  }
-
-  // Write output
-  const output = {
-    total_events: data.length,
-    instance_ids: instanceIds,
-    messages: allMessages
-  };
-
-  fs.writeFileSync('/tmp/discord-digest.json', JSON.stringify(output, null, 2));
-
-  const categoryCount = Object.values(categorized).filter(arr => arr.length > 0).length;
-  console.log(`Digest formatted: ${data.length} events across ${categoryCount} categories, ${allMessages.length} messages total. Written to /tmp/discord-digest.json`);
-} catch (error) {
-  console.error('Error:', error.message);
-  process.exit(1);
+function buildYoutubeSearchUrl(title) {
+  // Extract artist/band name (usually first part before descriptors)
+  const parts = title.split(' ');
+  const query = encodeURIComponent(parts.slice(0, Math.min(3, parts.length)).join('+'));
+  return `https://www.youtube.com/results?search_query=${query}`;
 }
