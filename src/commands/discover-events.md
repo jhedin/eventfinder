@@ -242,94 +242,87 @@ This script is safe to re-run — it skips events already assessed.
 
 ## Step 6: Generate Discord Digest
 
-Query for all pending (unsent) events:
+First check if there are any pending events:
 
 ```bash
-node scripts/db-query.js "SELECT e.*, ei.instance_date, ei.instance_time, ei.end_date, ei.ticket_sale_date, ei.ticket_sale_time, ei.id as instance_id FROM events e JOIN event_instances ei ON e.id = ei.event_id JOIN sent_events se ON se.instance_id = ei.id WHERE se.status = 'pending' ORDER BY ei.instance_date ASC"
+node scripts/db-query.js "SELECT COUNT(*) as cnt FROM sent_events WHERE status = 'pending'"
 ```
 
-If **no pending events**: Skip to Step 8 and report "No new events to send"
+If `cnt` is 0: Skip to Step 8 and report "No new events to send".
 
-### 6.1: Categorize Events
+Otherwise, delegate digest formatting to a **Haiku subagent** so the full event list never enters the main context. Set `model: "haiku"` on the Agent tool call.
 
-Group events by category:
-- 🎵 **Music**: Concerts, live music, band performances
-- 🎨 **Arts & Culture**: Gallery openings, theater, film, poetry
-- 🛠️ **Workshops**: Classes, hands-on learning, craft sessions
-- 📅 **Other**: Events that don't fit above
+Grant the subagent these tools: `Bash`, `Read`, `Write`.
 
-### 6.2: Format Discord Messages
-
-Format one message per category. Each message must be **≤ 1950 characters** (Discord limit, leave buffer). Split into multiple messages if needed.
-
-**Google Calendar quick-add URL format**:
+**Subagent prompt**:
 ```
-https://calendar.google.com/calendar/render?action=TEMPLATE&text=TITLE&dates=START/END&details=DESCRIPTION&location=VENUE
+You are EventFinder's digest formatter. Query pending events and format them into Discord messages.
+
+Working directory: /home/user/eventfinder
+Today's date: {TODAY}
+
+## Step 1: Query pending events
+Run:
+  node scripts/db-query.js "SELECT e.id, e.title, e.venue, e.description, e.price, e.event_url, e.ticket_url, ei.instance_date, ei.instance_time, ei.end_date, ei.ticket_sale_date, ei.ticket_sale_time, ei.id as instance_id FROM events e JOIN event_instances ei ON e.id = ei.event_id JOIN sent_events se ON se.instance_id = ei.id WHERE se.status = 'pending' ORDER BY ei.instance_date ASC"
+
+## Step 2: Categorize
+- 🎵 Music: Concerts, live music, band performances
+- 🎨 Arts & Culture: Gallery openings, theater, film, poetry, talks
+- 🛠️ Workshops: Classes, hands-on learning, craft sessions
+- 📅 Other: Events that don't fit above
+
+## Step 3: Format Discord messages
+
+Google Calendar URL:
+  https://calendar.google.com/calendar/render?action=TEMPLATE&text=TITLE&dates=START/END&details=DESCRIPTION&location=VENUE
+  - text: URL-encode the event title
+  - dates: if time known → YYYYMMDDTHHmmSS/YYYYMMDDTHHmmSS (end = start+2h if no end); if no time → YYYYMMDD/YYYYMMDD
+  - details: URL-encode the event_url
+  - location: URL-encode the venue name
+
+YouTube search (music events only):
+  https://www.youtube.com/results?search_query=ARTIST+NAME
+
+Per-event format:
+  **Event Title**
+  📅 Day Mon DD at H:MM PM · 📍 Venue · 💰 Price
+  🔗 <event_url> · 📆 Add event · 🎧 Listen
+
+- Skip null fields (no price → omit 💰; no event_url → omit 🔗; no time → just date)
+- Include 🎫 ticket_url before 🔗 event_url if different from event_url
+- Include 🔔 Tickets on sale [date] only if ticket_sale_date is set
+- Include 🎧 for music events only
+- Category header: `🎵 **Music** — N new events`
+- Each Discord message ≤ 1950 chars; split into (continued) messages if needed
+
+## Step 4: Write output to /tmp/discord-digest.json
+{
+  "total_events": N,
+  "instance_ids": [all instance_id values],
+  "messages": ["header message", "category message 1", ...]
+}
+
+Include a header message as the first entry:
+  "🗓️ **EventFinder Digest** — N new events · {TODAY formatted as Month D, YYYY}"
+
+Return a one-line summary: "Digest formatted: N events, Y messages. Written to /tmp/discord-digest.json"
 ```
-- `text`: URL-encode the event title
-- `dates`: `YYYYMMDDTHHMMSS/YYYYMMDDTHHMMSS` (local time, no Z suffix — let Google handle timezone)
-  - If no time known: use `YYYYMMDD/YYYYMMDD` (all-day format)
-  - End time: use start + 2 hours if no end time available
-- `details`: URL-encode the event_url
-- `location`: URL-encode the venue name
-
-**YouTube search URL format** (for music events only):
-```
-https://www.youtube.com/results?search_query=ARTIST+NAME
-```
-- URL-encode the artist/band name from the event title
-- Only generate for 🎵 Music category events, not workshops or arts events
-
-Generate **up to 3 links per event**:
-
-1. **Event calendar link** (always): `📆 Add event` — links to the event date/time
-2. **Ticket sale reminder** (only if `ticket_sale_date` is set): `🔔 Tickets on sale [date]` — links to the ticket sale date as an all-day event, with title prefixed "🎫 Tickets on sale: [event title]"
-3. **YouTube search** (music events only): `🎧 Listen` — YouTube search for the artist name
-
-**Format**:
-```
-🎵 **Music** — 3 new events
-
-**Jazz Night with Sarah Vaughan Tribute**
-📅 Fri Oct 15 at 8:00 PM · 📍 Blue Note Jazz Club · 💰 $25-$35
-🔗 <event_url> · 📆 Add event · 🎧 Listen
-
-**The National - Live**
-📅 Sat Oct 22 at 8:00 PM · 📍 MacEwan Ballroom · 💰 $50-$75
-🎫 <ticket_url> · 🔗 <event_url> · 📆 Add event · 🔔 Tickets on sale Apr 1 · 🎧 Listen
-```
-
-Only include fields that are available (skip null fields). Always include 📆. Only include 🔔 if ticket_sale_date is known. Only include 🎧 for music events.
 
 ---
 
 ## Step 7: Post to Discord
 
-Use the Bash tool to POST each category message to the Discord webhook using `curl`. **Always use curl — do not use Node.js fetch, which times out in this environment.**
-
-**Always write the JSON body to a temp file** — never inline it in the shell command. Inlining breaks `$` signs (prices like `$25` become empty strings) and single quotes in content.
+Run:
 
 ```bash
-# Write message to temp file first (preserves $, quotes, special chars)
-node -e "require('fs').writeFileSync('/tmp/discord_msg.json', JSON.stringify({content: process.argv[1]}))" "<message>"
-
-# Then post it
-curl -s -o /dev/null -w "%{http_code}" \
-  -H "Content-Type: application/json" \
-  -d @/tmp/discord_msg.json \
-  "$DISCORD_WEBHOOK_URL"
+node scripts/post-discord.js
 ```
 
-A response of `204` means success. If you get a non-204 response or an error, retry once before giving up.
+This script reads `/tmp/discord-digest.json`, posts all messages with rate-limit backoff, and exits 0 on success or 1 if any messages failed.
 
-Post a header message first:
-```
-🗓️ **EventFinder Digest** — {count} new events · {date}
-```
+**If `DISCORD_WEBHOOK_URL` is not set**: The script exits cleanly with a warning — continue to Step 8.
 
-Then one message per non-empty category.
-
-**If `DISCORD_WEBHOOK_URL` is not set**: Skip this step, log a warning, continue to Step 8.
+Check the exit code and output to confirm success before marking events as sent.
 
 ---
 
@@ -346,10 +339,11 @@ Then commit the updated database back to GitHub:
 ```bash
 git config user.email "eventfinder-bot@users.noreply.github.com"
 git config user.name "EventFinder Bot"
+git checkout main
+git pull origin main --no-rebase -X ours
 git add data/eventfinder.db
 git commit -m "chore: update event database with $(date +%Y-%m-%d) discovery run [skip ci]"
-git pull origin main --no-rebase -X ours
-git push origin HEAD:main
+git push origin main
 ```
 
 **If Discord post failed**: Do NOT mark as sent (events stay 'pending' for retry next run). Still commit the DB to save any newly discovered events.
