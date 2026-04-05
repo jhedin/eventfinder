@@ -62,6 +62,40 @@ Report a summary: how many items kept vs dropped per store, total per category.
 
 ---
 
+## Phase 2.5: Store
+
+Persist the curated deals into the database so they're queryable later.
+
+### Ensure flyer sources exist
+
+For each store in the curated results, ensure a row exists in `sources` with `type = 'flyer'`. Use the store name as both `name` and `url` (e.g., `url = 'flipp://safeway'`). If the source already exists, reuse it.
+
+### Insert flyer items
+
+For each curated item, insert into `flyer_items`:
+
+| Column | Value |
+|---|---|
+| `item_hash` | hash of `item_name + brand + sale_price + source_id + sale_end` |
+| `item_name` | item `name` from curated JSON |
+| `brand` | item `brand` (if present) |
+| `sale_price` | item `price` |
+| `regular_price` | item `original_price` (if present) |
+| `category` | the category key (e.g., "Meat & Seafood") |
+| `sale_start` | from the raw batch data for that store |
+| `sale_end` | from the raw batch data for that store |
+| `image_url` | from raw batch data if available |
+| `source_id` | the `sources.id` for that store |
+| `source_url` | `'flipp://' + store_name_lowercase` |
+
+Use `INSERT OR IGNORE` to skip duplicates (same `item_hash`).
+
+To get `sale_start`/`sale_end` and `image_url`, cross-reference the raw batch data in `/tmp/eventfinder-flyer-batch-flipp.json` with the curated items by store name and item name.
+
+Report: `{n} items stored, {n} duplicates skipped`.
+
+---
+
 ## Phase 3: Publish
 
 Read `/tmp/eventfinder-flyer-curated.json` and post to Discord.
@@ -128,6 +162,7 @@ git push
 ✅ Flyer Discovery Complete
 Phase 1 — Gather: {n} merchants, {n} raw items
 Phase 2 — Classify: {n} items kept, {n} dropped, {n} categories
+Phase 2.5 — Store: {n} items stored, {n} duplicates skipped
 Phase 3 — Publish: ✅ posted to Discord
 ```
 

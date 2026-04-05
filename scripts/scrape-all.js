@@ -11,6 +11,7 @@ import { writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
+import { htmlToMd } from './html-to-md.js';
 
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3');
@@ -63,14 +64,18 @@ const results = [];
 for (const source of sources) {
   const htmlFile = `/tmp/${filePrefix}-page-${source.id}.html`;
   process.stdout.write(`[${source.id}] ${source.url} ... `);
+  const mdFile = `/tmp/${filePrefix}-page-${source.id}.md`;
   try {
     const html = token ? fetchWithBrowserless(source.url) : fetchPlain(source.url);
     writeFileSync(htmlFile, html);
-    console.log(`OK (${html.length} bytes)`);
-    results.push({ source_id: source.id, source_url: source.url, source_name: source.name, success: true, html_file: htmlFile, error: null });
+    const md = htmlToMd(html, { sourceUrl: source.url });
+    writeFileSync(mdFile, md);
+    const pct = Math.round((md.length / html.length) * 100);
+    console.log(`OK (${html.length} bytes → ${md.length} bytes, ${pct}%)`);
+    results.push({ source_id: source.id, source_url: source.url, source_name: source.name, success: true, html_file: htmlFile, md_file: mdFile, error: null });
   } catch (err) {
     console.log(`FAILED: ${err.message}`);
-    results.push({ source_id: source.id, source_url: source.url, source_name: source.name, success: false, html_file: null, error: err.message });
+    results.push({ source_id: source.id, source_url: source.url, source_name: source.name, success: false, html_file: null, md_file: null, error: err.message });
   }
 }
 
