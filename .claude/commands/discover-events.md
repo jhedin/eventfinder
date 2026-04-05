@@ -61,7 +61,7 @@ This gives you the websites to check for events.
 
 **If the Gmail connector is available**, read unread venue newsletters:
 
-1. Search for unread emails: `is:unread newer_than:2d`
+1. Search for unread emails: `is:unread newer_than:2d -to:j.hedin.open.claw+flyers@gmail.com`
 2. For each email: extract the plain text body
 3. Pass the body through the same event extraction process as Step 3.2 (treat it like markdown from a website)
 4. Mark each email as read after processing
@@ -89,41 +89,42 @@ After it completes, proceed to 3.2.
 
 ### 3.2: Dispatch Extraction Subagents in Parallel
 
-Read `/tmp/eventfinder-fetch-manifest.json` to get the fetch results. Divide the sources into batches of 4–5 and dispatch one subagent per batch simultaneously using the **Agent tool**.
+Read `/tmp/eventfinder-fetch-manifest.json` to get the fetch results. Dispatch **one subagent per source** simultaneously using the **Agent tool** — do not batch multiple sources together, as large HTML files cause timeouts.
 
-**IMPORTANT**: When calling the Agent tool, set `allowed_tools: ["Read", "Write"]` to prevent subagents from using WebFetch or Bash. They only need to read files and write JSON.
+**IMPORTANT**:
+- Set `model: "haiku"` on every Agent tool call — extraction is mechanical and does not need a large model
+- Set `allowed_tools: ["Read", "Write"]` to prevent subagents from using WebFetch or Bash
 
 Pass each subagent:
-- The list of sources (id, url, name) with their fetch status (success/failed) and html_file paths — taken directly from the manifest
+- The single source (id, url, name) with its fetch status and html_file path — taken from the manifest
 - Today's date (for relative date parsing)
-- The output file path to write results to (e.g. `/tmp/eventfinder-batch-1.json`)
+- The output file path (e.g. `/tmp/eventfinder-src-{source_id}.json`)
 
 **Subagent prompt template**:
 ```
-You are an event extractor. Your ONLY job is to read pre-fetched HTML files and extract events as structured JSON.
+You are an event extractor. Your ONLY job is to read one pre-fetched HTML file and extract events as structured JSON.
 
-You have access to ONLY two tools: Read (to read HTML files) and Write (to write the output JSON).
-The HTML files have already been downloaded for you — do not try to fetch any URLs.
+You have access to ONLY two tools: Read (to read the HTML file) and Write (to write the output JSON).
+The HTML file has already been downloaded — do not try to fetch any URLs.
 
 Today's date: {TODAY}
 Default timezone: America/Edmonton
 
 Output file: {OUTPUT_FILE}
 
-Sources and their pre-fetched HTML files:
-{SOURCE_LIST_WITH_FILES}
-(Format: source_id | source_url | html_file | fetch_success | fetch_error)
+Source:
+{SOURCE_ID} | {SOURCE_URL} | {HTML_FILE} | {FETCH_SUCCESS} | {FETCH_ERROR}
 
-For each source:
-1. If fetch_success is false: record it as failed with the fetch_error message — do NOT try to fetch it yourself
-2. If fetch_success is true: use the Read tool to read the HTML file, then extract all events from the content
+Instructions:
+1. If fetch_success is false: write the error result immediately — do NOT try to fetch the URL yourself
+2. If fetch_success is true: use the Read tool to read the HTML file ONCE, then extract all future events (on or after {TODAY})
 
 Build a JSON object:
 {
   "results": [
     {
-      "source_id": 1,
-      "source_url": "https://...",
+      "source_id": {SOURCE_ID},
+      "source_url": "{SOURCE_URL}",
       "success": true,
       "js_heavy": false,
       "error": null,
@@ -153,69 +154,89 @@ Build a JSON object:
 }
 
 Rules:
+- Read the file exactly ONCE — do not re-read it
 - Return empty "events": [] if no events found on a page
 - Mark js_heavy=true if the HTML looks like a JS-only shell (minimal content, no events visible)
 - Parse dates carefully — handle "Tomorrow", "Next Friday", relative dates
 - Include all instances for recurring events
+- Only include events on or after {TODAY}
 
 Write the JSON object to the output file using the Write tool, then return only a one-line summary like:
-"Batch complete: 3 sources succeeded, 1 failed, 42 events extracted. Written to {OUTPUT_FILE}"
+"Source {SOURCE_ID} complete: 12 events extracted. Written to {OUTPUT_FILE}"
 ```
 
 ### 3.3: Collect Subagent Results
 
-Wait for all subagents to complete. Each subagent has written its results to `/tmp/eventfinder-batch-N.json`. Run the import script to merge all batch files into the database:
+Wait for all subagents to complete. Each subagent has written its results to `/tmp/eventfinder-src-{source_id}.json`. Run the import script to merge all result files into the database:
 
 ```bash
 node scripts/import-batch-results.js
 ```
 
-This script handles everything: deduplication, DB insertion, and source status updates. **Do not write your own insertion script** — use this one. If it reports "No batch files found", check that the subagents actually wrote their output files before proceeding.
+This script finds all `/tmp/eventfinder-*.json` files, handles deduplication, DB insertion, and source status updates. **Do not write your own insertion script** — use this one. If it reports "No batch files found", check that the subagents actually wrote their output files before proceeding.
 
 Note any `js_heavy: true` sources reported in the output for the Step 9 summary.
 
 ---
 
-## Step 4: Assess Unreviewed Events
+## Steps 4–5: Assess Events and Match to User Preferences
 
-`import-batch-results.js` (Step 3.3) already inserted all new events. Now query for events not yet assessed:
+Delegate this entire step to a **Haiku subagent** so the full event list never enters the main context. Set `model: "haiku"` on the Agent tool call.
 
-```bash
-node scripts/db-query.js "SELECT e.id, e.title, e.venue, e.description, e.price, e.event_url, e.source_id FROM events e WHERE e.id NOT IN (SELECT DISTINCT event_id FROM sent_events)"
+Grant the subagent these tools: `Bash`, `Read`, `Write`.
+
+**Subagent prompt**:
+```
+You are an event relevance matcher for EventFinder.
+
+Your job:
+1. Query unreviewed events from the database
+2. Read the user's preferences
+3. Decide which events match, then write a decisions file
+
+Tools available: Bash (to run db-query.js), Read (to read preferences), Write (to write decisions).
+
+Today's date: {TODAY}
+
+## Step 1: Query unreviewed events
+Run:
+  node scripts/db-query.js "SELECT e.id, e.title, e.venue, e.description, e.price, e.event_url, e.source_id FROM events e WHERE e.id NOT IN (SELECT DISTINCT event_id FROM sent_events)"
+
+## Step 2: Read user preferences
+Read the file: data/user-preferences.md
+
+## Step 3: Assess every event
+For each event, decide: does it match the user's interests?
+
+Consider: event type, venue, price, exclusions. When in doubt, include it (status: "pending").
+
+Contextual understanding:
+- "The National" = indie rock band
+- "Blue Note" / "jazz club" = jazz music
+- Workshop at craft/art store = hands-on class (probably interested)
+- Blues Can / Ironwood / King Eddy = blues/folk/roots music venues
+
+## Step 4: Write decisions file
+Write ALL decisions to /tmp/relevance-decisions.json in this format:
+[
+  {"event_id": 42, "status": "pending", "reason": "Jazz quartet at intimate venue — matches jazz interest"},
+  {"event_id": 43, "status": "excluded", "reason": "Heavy metal festival — explicitly excluded"}
+]
+
+- status "pending" = matches user interests (include in digest)
+- status "excluded" = does not match
+
+Write the file, then return a one-line summary:
+"Relevance complete: N matched, N excluded. Written to /tmp/relevance-decisions.json"
 ```
 
----
-
-## Step 5: Match to User Preferences
-
-For each unreviewed event, decide if it matches user interests based on `data/user-preferences.md`.
-
-**Consider**: event type, venue, timing, price, exclusions. When in doubt, include it.
-
-**Contextual understanding**:
-- "The National" = indie rock band (not a national holiday)
-- "Blue Note" / "jazz club" = jazz music
-- Workshop at craft store = hands-on class
-
-After assessing ALL events, record every decision in **one batch command**:
+Wait for the subagent to complete, then run:
 
 ```bash
 node scripts/record-relevance-batch.js /tmp/relevance-decisions.json
 ```
 
-Write `/tmp/relevance-decisions.json` first (using the Write tool), then run the command. Format:
-
-```json
-[
-  {"event_id": 42, "status": "pending", "reason": "Jazz quartet at intimate venue — matches jazz interest"},
-  {"event_id": 43, "status": "excluded", "reason": "Heavy metal festival — explicitly excluded"}
-]
-```
-
-- `status`: `pending` (matches) or `excluded` (does not match)
-- `reason`: one sentence explanation
-
-This script is safe to re-run — it skips events already assessed. **Do not run record-relevance.js once per event** — always use the batch script.
+This script is safe to re-run — it skips events already assessed.
 
 ---
 
