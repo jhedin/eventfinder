@@ -2,6 +2,11 @@
 // Converts fetched HTML to compact, clean text for LLM event extraction.
 //
 // Strategy:
+//   0. FAST PATHS (structured data extraction — bypasses full HTML parse):
+//      a. Shopify product JSON: extract "products":[...] array embedded in page.
+//         Workshop sites (Black Forest Wood, Stash Lounge, etc.) encode all
+//         sessions as Shopify product variants with full date/time/price.
+//         Result: clean product list, ~200 lines vs 600KB HTML.
 //   1. Remove pure noise: stylesheets, external scripts, SVGs, comments, <head>
 //   2. Inline <script> blocks: keep ONLY lines that look like data
 //      (string assignments, dates, URLs) — strips JS boilerplate
@@ -10,15 +15,86 @@
 //
 // Result: typically 90-98% smaller than the original HTML, all event data intact.
 //
-// Usage (CLI):   node scripts/html-to-md.js input.html output.md
+// Usage (CLI):   node scripts/html-to-md.js input.html [output.md] [source-url]
 // Usage (module): import { htmlToMd } from './scripts/html-to-md.js'
+//                 htmlToMd(html, { sourceUrl: 'https://...' })
 
 import { readFileSync, writeFileSync } from 'fs';
 import { load } from 'cheerio';
 
+// ── Fast path: Shopify product JSON ──────────────────────────────────────────
+// Shopify stores embed all product+variant data in a "products":[...] JSON
+// array inside a <script> block. Workshop sites use product variants to
+// represent individual class dates (e.g. "Pen Turning - May 9th 2026").
+// Extracting this is far cheaper than parsing the full HTML.
+
+function extractShopifyProducts(html, sourceUrl) {
+  // Find "products":[ in the raw HTML and extract the full JSON array
+  const key = '"products":[';
+  const start = html.indexOf(key);
+  if (start === -1) return null;
+
+  // Walk forward counting brackets to find the end of the array
+  let depth = 0;
+  let i = start + key.length - 1; // position at '['
+  const end = Math.min(html.length, start + 500_000); // safety cap
+  for (; i < end; i++) {
+    const c = html[i];
+    if (c === '[' || c === '{') depth++;
+    else if (c === ']' || c === '}') { depth--; if (depth === 0) break; }
+  }
+
+  let products;
+  try {
+    products = JSON.parse(html.slice(start + key.length - 1, i + 1));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(products) || !products.length) return null;
+
+  // Derive base URL for product links
+  let origin = '';
+  try { origin = new URL(sourceUrl).origin; } catch { /* ignore */ }
+
+  const lines = ['## Shopify Products / Workshops\n'];
+  for (const p of products) {
+    if (!p.handle) continue;
+    const vars  = Array.isArray(p.variants) ? p.variants : [];
+    if (!vars.length) continue;
+    const firstVariantName = vars[0]?.name || '';
+    const name = firstVariantName.includes(' - ')
+      ? firstVariantName.split(' - ')[0].trim()
+      : p.handle.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    const url   = origin ? `${origin}/products/${p.handle}` : '';
+
+    lines.push(`### ${name}`);
+    if (url)  lines.push(`URL: ${url}`);
+
+    // Price (stored in cents by Shopify)
+    const price = vars[0]?.price;
+    if (price) lines.push(`Price: $${(price / 100).toFixed(2)}`);
+
+    // Each variant = one session date
+    for (const v of vars) {
+      const dateLabel = v.public_title || v.title || '';
+      if (!dateLabel) continue;
+      // Mark sold-out variants so the LLM can skip them
+      const avail = v.available === false ? ' [SOLD OUT]' : '';
+      lines.push(`- ${dateLabel}${avail}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
 // ── Exported conversion function ─────────────────────────────────────────────
 
-export function htmlToMd(html) {
+export function htmlToMd(html, { sourceUrl = '' } = {}) {
+  // ── Phase 0: fast-path structured extraction ───────────────────────────────
+  const shopify = extractShopifyProducts(html, sourceUrl);
+  if (shopify) return shopify;
+
   // ── Phase 1: string-level pre-strip (fast, regex) ─────────────────────────
   let t = html;
 
@@ -144,10 +220,10 @@ export function htmlToMd(html) {
 
 // ── CLI entry point ───────────────────────────────────────────────────────────
 
-const [,, inputFile, outputFile] = process.argv;
+const [,, inputFile, outputFile, sourceUrl] = process.argv;
 if (inputFile && outputFile) {
   const html = readFileSync(inputFile, 'utf8');
-  const md   = htmlToMd(html);
+  const md   = htmlToMd(html, { sourceUrl: sourceUrl || '' });
   writeFileSync(outputFile, md);
   const pct = Math.round((md.length / html.length) * 100);
   console.log(`${inputFile.split('/').pop()}: ${html.length.toLocaleString()}B → ${md.length.toLocaleString()}B (${pct}%)`);

@@ -68,7 +68,7 @@ for (const source of sources) {
   try {
     const html = token ? fetchWithBrowserless(source.url) : fetchPlain(source.url);
     writeFileSync(htmlFile, html);
-    const md = htmlToMd(html);
+    const md = htmlToMd(html, { sourceUrl: source.url });
     writeFileSync(mdFile, md);
     const pct = Math.round((md.length / html.length) * 100);
     console.log(`OK (${html.length} bytes → ${md.length} bytes, ${pct}%)`);
