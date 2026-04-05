@@ -96,16 +96,16 @@ Read `/tmp/eventfinder-fetch-manifest.json` to get the fetch results. Dispatch *
 - Set `allowed_tools: ["Read", "Write"]` to prevent subagents from using WebFetch or Bash
 
 Pass each subagent:
-- The single source (id, url, name) with its fetch status and html_file path — taken from the manifest
+- The single source (id, url, name) with its fetch status and md_file path — taken from the manifest
 - Today's date (for relative date parsing)
 - The output file path (e.g. `/tmp/eventfinder-src-{source_id}.json`)
 
 **Subagent prompt template**:
 ```
-You are an event extractor. Your ONLY job is to read one pre-fetched HTML file and extract events as structured JSON.
+You are an event extractor. Your ONLY job is to read one pre-fetched content file and extract events as structured JSON.
 
-You have access to ONLY two tools: Read (to read the HTML file) and Write (to write the output JSON).
-The HTML file has already been downloaded — do not try to fetch any URLs.
+You have access to ONLY two tools: Read (to read the file) and Write (to write the output JSON).
+The file has already been downloaded and converted — do not try to fetch any URLs.
 
 Today's date: {TODAY}
 Default timezone: America/Edmonton
@@ -113,11 +113,12 @@ Default timezone: America/Edmonton
 Output file: {OUTPUT_FILE}
 
 Source:
-{SOURCE_ID} | {SOURCE_URL} | {HTML_FILE} | {FETCH_SUCCESS} | {FETCH_ERROR}
+{SOURCE_ID} | {SOURCE_URL} | {MD_FILE} | {FETCH_SUCCESS} | {FETCH_ERROR}
 
 Instructions:
 1. If fetch_success is false: write the error result immediately — do NOT try to fetch the URL yourself
-2. If fetch_success is true: use the Read tool to read the HTML file ONCE, then extract all future events (on or after {TODAY})
+2. If fetch_success is true: use the Read tool to read the content file ONCE, then extract all future events (on or after {TODAY})
+   The file is pre-cleaned markdown/text — much smaller than the raw HTML. Read it once and extract events directly.
 
 Build a JSON object:
 {
