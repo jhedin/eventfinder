@@ -57,22 +57,6 @@ This gives you the websites to check for events.
 
 ---
 
-## Step 2b: Read Gmail Newsletter Inbox (optional)
-
-**If the Gmail connector is available**, read unread venue newsletters:
-
-1. Search for unread emails: `is:unread newer_than:2d -to:j.hedin.open.claw+flyers@gmail.com`
-2. For each email: extract the plain text body
-3. Pass the body through the same event extraction process as Step 3.2 (treat it like markdown from a website)
-4. Mark each email as read after processing
-5. Associate these events with a special source (use `source_id` for a "Gmail Newsletters" source entry — create it if it doesn't exist)
-
-Feed extracted events into the same deduplication and preference matching pipeline (Steps 4–5).
-
-**If Gmail connector is not available**: Skip this step and continue.
-
----
-
 ## Step 3: Fetch and Extract Events
 
 ### 3.1: Fetch All Sources
@@ -137,8 +121,6 @@ Build a JSON object:
           "price": "$25",
           "event_url": "...",
           "ticket_url": "...",
-          "image_url": "...",
-          "minimum_age": null,
           "instances": [
             {
               "date": "2026-04-15",
@@ -168,13 +150,14 @@ Write the JSON object to the output file using the Write tool, then return only 
 
 ### 3.3: Collect Subagent Results
 
-Wait for all subagents to complete. Each subagent has written its results to `/tmp/eventfinder-src-{source_id}.json`. Run the import script to merge all result files into the database:
+Wait for all subagents to complete. Each subagent has written its results to `/tmp/eventfinder-src-{source_id}.json`. First merge them into the batch format, then import:
 
 ```bash
+node scripts/merge-src-to-batch.js
 node scripts/import-batch-results.js
 ```
 
-This script finds all `/tmp/eventfinder-*.json` files, handles deduplication, DB insertion, and source status updates. **Do not write your own insertion script** — use this one. If it reports "No batch files found", check that the subagents actually wrote their output files before proceeding.
+`merge-src-to-batch.js` combines all `/tmp/eventfinder-src-*.json` files into `/tmp/eventfinder-batch-merged.json`. `import-batch-results.js` then reads that file, handles deduplication, DB insertion, and source status updates. **Do not write your own insertion script** — use these two. If `import-batch-results.js` reports "No batch files found", check that `merge-src-to-batch.js` ran successfully first.
 
 Note any `js_heavy: true` sources reported in the output for the Step 9 summary.
 
