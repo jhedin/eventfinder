@@ -22,7 +22,7 @@ function formatDiscordDigest(events) {
     return {
       total_events: 0,
       instance_ids: [],
-      messages: ["🗓️ **EventFinder Digest** — No new events · April 5, 2026"]
+      messages: ["🗓️ **EventFinder Digest** — No new events · April 19, 2026"]
     };
   }
 
@@ -32,7 +32,7 @@ function formatDiscordDigest(events) {
   const messages = [];
 
   // Header
-  messages.push(`🗓️ **EventFinder Digest** — ${events.length} new events · April 5, 2026`);
+  messages.push(`🗓️ **EventFinder Digest** — ${events.length} new events · April 19, 2026`);
 
   // Categories in order
   const categoryOrder = ['🎵 Music', '🎨 Arts & Culture', '🛠️ Workshops', '📅 Other'];
@@ -47,15 +47,15 @@ function formatDiscordDigest(events) {
 
     for (const event of catEvents) {
       const eventStr = formatEvent(event, category);
-      const lastMsg = categoryMessages[categoryMessages.length - 1];
+      const currentMsgLength = categoryMessages.join('\n\n').length;
 
-      // Check if adding this event exceeds 1950 char limit
-      if ((lastMsg + '\n\n' + eventStr).length > 1950) {
+      // Check if adding this event exceeds 1900 char limit
+      if (currentMsgLength > 0 && (currentMsgLength + 2 + eventStr.length) > 1900) {
         // Push current accumulated message
         messages.push(categoryMessages.join('\n\n'));
-        // Start new message with category header
+        // Start new message with category header and "(continued)"
         categoryMessages.length = 0;
-        categoryMessages.push(categoryHeader);
+        categoryMessages.push(`(continued) ${categoryHeader}`);
       }
       categoryMessages.push(eventStr);
     }
@@ -81,8 +81,8 @@ function categorizeEvents(events) {
     'Other': []
   };
 
-  const musicKeywords = ['jazz', 'concert', 'band', 'live music', 'indie performance', 'performance program'];
-  const artsKeywords = ['theatre', 'theater', 'gallery', 'film', 'poetry', 'talk', 'dance', 'opera'];
+  const musicKeywords = ['jazz', 'concert', 'band', 'live music', 'indie performance', 'performance program', 'quartet', 'quintet', 'tribute', 'music hall', 'dm', 'singer', 'rolling stones', 'liner notes'];
+  const artsKeywords = ['theatre', 'theater', 'gallery', 'film', 'poetry', 'talk', 'opera', 'art', 'exhibit', 'opening', 'dance'];
   const workshopsKeywords = ['workshop', 'class', 'carving', 'hands-on', 'craft'];
 
   for (const event of events) {
