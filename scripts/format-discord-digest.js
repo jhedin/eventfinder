@@ -31,8 +31,11 @@ function formatDiscordDigest(events) {
 
   const messages = [];
 
-  // Header
-  messages.push(`🗓️ **EventFinder Digest** — ${events.length} new events · April 19, 2026`);
+  // Header with current date
+  const today = new Date();
+  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const dateStr = `${months[today.getMonth()]} ${today.getDate()}, ${today.getFullYear()}`;
+  messages.push(`🗓️ **EventFinder Digest** — ${events.length} new events · ${dateStr}`);
 
   // Categories in order
   const categoryOrder = ['🎵 Music', '🎨 Arts & Culture', '🛠️ Workshops', '📅 Other'];
