@@ -55,6 +55,7 @@ function formatSaleEnd(displayName) {
 const CATEGORY_EMOJI = {
   'Meat & Seafood': '🥩',
   'Produce':        '🥬',
+  'Dairy':          '🧀',
   'Dairy & Eggs':   '🧀',
   'Bakery':         '🍞',
   'Frozen':         '🧊',
@@ -67,6 +68,7 @@ const CATEGORY_EMOJI = {
 const CATEGORY_COLOR = {
   'Meat & Seafood': 0xE74C3C,
   'Produce':        0x2ECC71,
+  'Dairy':          0xF1C40F,
   'Dairy & Eggs':   0xF1C40F,
   'Bakery':         0xE67E22,
   'Frozen':         0x3498DB,
@@ -147,7 +149,7 @@ async function main() {
     process.exit(0);
   }
 
-  const { date, categories } = JSON.parse(readFileSync(INPUT, 'utf8'));
+  const { date, categories, highlights } = JSON.parse(readFileSync(INPUT, 'utf8'));
 
   // Collect all embeds in order
   const allEmbeds = [];
@@ -207,6 +209,22 @@ async function main() {
   for (let i = 1; i < batches.length; i++) {
     await postPayload({ embeds: batches[i] });
     console.log(`  [${i + 1}/${batches.length}] posted`);
+  }
+
+  // Post highlights embed last (appears at bottom of channel, seen first by user)
+  if (highlights && highlights.length > 0) {
+    const highlightLines = highlights.map(item => {
+      const pricePart = item.price ? `**${item.price}**` : '';
+      const origPart  = item.original_price ? ` ~~${item.original_price}~~` : '';
+      return `• ${item.name} — ${pricePart}${origPart} @ ${item.store}`;
+    });
+    const highlightEmbed = {
+      title: '⭐ Highlights — This Week\'s Best Deals',
+      color: 0xFFD700,
+      description: highlightLines.join('\n'),
+    };
+    await postPayload({ embeds: [highlightEmbed] });
+    console.log(`  highlights embed posted`);
   }
 
   console.log(`\n✅ Posted to Discord: ${totalDeals} deals across ${allEmbeds.length} embeds in ${batches.length} message(s).`);

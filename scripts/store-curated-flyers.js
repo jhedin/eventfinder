@@ -68,8 +68,8 @@ for (const store of batch) {
 // Ensure source rows exist for each store
 const stmtGetSource = db.prepare("SELECT id FROM sources WHERE url = ?");
 const stmtInsertSource = db.prepare(`
-  INSERT INTO sources (name, url, active)
-  VALUES (?, ?, 1)
+  INSERT INTO sources (name, url, active, type)
+  VALUES (?, ?, 1, 'flyer')
 `);
 const stmtInsertItem = db.prepare(`
   INSERT OR IGNORE INTO flyer_items
