@@ -11,7 +11,7 @@ import { readFileSync, writeFileSync } from 'fs';
 
 const INPUT  = '/tmp/eventfinder-flyer-batch-flipp.json';
 const OUTPUT = '/tmp/eventfinder-flyer-curated.json';
-const TODAY  = '2026-03-30';
+const TODAY  = '2026-05-04';
 
 // ---------------------------------------------------------------------------
 // Drop Sobeys (same flyer as Safeway)
