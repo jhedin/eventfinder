@@ -14,9 +14,9 @@ const OUTPUT = '/tmp/eventfinder-flyer-curated.json';
 const TODAY  = new Date().toISOString().slice(0, 10);
 
 // ---------------------------------------------------------------------------
-// Drop Sobeys (same flyer as Safeway)
+// Drop Sobeys (same flyer as Safeway) and liquor-only stores
 // ---------------------------------------------------------------------------
-const DROP_STORES = new Set(['Sobeys']);
+const DROP_STORES = new Set(['Sobeys', 'Co-op Wine Spirits Beer', 'Sobeys & Safeway Liquor']);
 
 // ---------------------------------------------------------------------------
 // Keyword lists for food vs non-food classification
@@ -98,6 +98,19 @@ const NON_FOOD_KEYWORDS = [
   'air freshener','candle','incense',
   'magazine','book','stationery',
   'mop','broom','vacuum','sponge',
+  'milk thistle','protein shake','pre-workout','creatine','collagen peptide',
+  'nozzle','wand','sprinkler','hose','pendant','chandelier','fixture',
+  'roaster','bakeware','cookware','casserole dish','appliance',
+  'coffee maker','coffee machine','espresso maker','espresso machine',
+  'blender','juicer','air fryer','instant pot','slow cooker','rice cooker',
+  'knife','knives','sheath','blade','spirit level','level meter',
+  'sewing','iron board','garment','clothing iron',
+  'wrench','socket','drill bit','saw blade','chisel','pliers','screwdriver',
+  'bottle set','water bottle','tumbler','thermos','travel mug','reusable',
+  'impact wrench','nut-busting','busting',
+  'chair','lawn chair','camp chair','camping chair','cooler bag','ice chest',
+  'hard cooler','beach tote','backpack','tote bag',
+  'lawn','patio','outdoor furniture','deck','tent','sleeping bag',
 ];
 
 // ---------------------------------------------------------------------------
@@ -107,28 +120,26 @@ const NON_FOOD_KEYWORDS = [
 function assignCategory(name, brand) {
   const text = (name + ' ' + (brand || '')).toLowerCase();
 
-  if (/chicken|beef|pork|lamb|turkey|duck|bison|steak|roast|rib|chop|tenderloin|breast|thigh|wing|sausage|bacon|ham|salami|pepperoni|chorizo|prosciutto|deli meat|hot dog|wiener|ground (beef|pork|turkey|meat)|salmon|tuna|tilapia|cod|halibut|shrimp|prawn|crab|lobster|scallop|mussel|clam|oyster|squid|fish fillet|seafood|smoked fish/.test(text)) {
+  // Meat & seafood — use word boundaries for short ambiguous tokens
+  if (/chicken|beef|pork|\blamb\b|turkey|\bduck\b|bison|steak|\broast\b|\brib\b|ribs|\bchop\b|tenderloin|\bbreast\b|\bthigh\b|\bwing\b|sausage|bacon|\bham\b|salami|pepperoni|chorizo|prosciutto|deli meat|hot dog|wiener|ground (beef|pork|turkey|meat)|salmon|\btuna\b|tilapia|\bcod\b|halibut|shrimp|prawn|\bcrab\b|lobster|scallop|mussel|\bclam\b|oyster|squid|fish fillet|seafood|smoked fish/.test(text)) {
     return 'Meat & Seafood';
   }
-  if (/apple|banana|orange|grape|strawberr|blueberr|raspberr|mango|pineapple|watermelon|cantaloupe|melon|peach|plum|pear|cherr|lemon|lime|avocado|tomato|potato|onion|garlic|ginger|carrot|celery|lettuce|spinach|kale|broccoli|cauliflower|cabbage|cucumber|zucchini|pepper|mushroom|asparagus|\bcorn\b|peas|\bbeans\b|squash|yam|sweet potato|beet|radish|leek|fennel|artichoke|berr|fresh fruit|fresh veg|produce|herb/.test(text)) {
+  if (/apple|banana|orange|grape|strawberr|blueberr|raspberr|mango|pineapple|watermelon|cantaloupe|\bmelon\b|\bpeach\b|\bplum\b|\bpear\b|cherr|lemon|lime|avocado|tomato|potato|onion|garlic|ginger|carrot|celery|lettuce|spinach|\bkale\b|broccoli|cauliflower|cabbage|cucumber|zucchini|pepper|mushroom|asparagus|\bcorn\b|\bpeas\b|\bbeans\b|\bsquash\b|\byam\b|sweet potato|\bbeet\b|\bkale\b|\bleek\b|fennel|artichoke|berr|fresh fruit|fresh veg|produce|\bherb\b/.test(text)) {
     return 'Produce';
   }
-  if (/\bmilk\b|butter|cream cheese|sour cream|cottage cheese|cream|cheese|yogurt|yoghurt|mozzarella|cheddar|brie|camembert|gouda|parmesan|feta|ricotta|\begg\b|\beggs\b|kefir|ice cream|gelato|sherbet|whipping/.test(text)) {
+  if (/\bmilk\b|butter|cream cheese|sour cream|cottage cheese|\bcream\b|cheese|yogurt|yoghurt|mozzarella|cheddar|\bbrie\b|camembert|gouda|parmesan|\bfeta\b|ricotta|\begg\b|\beggs\b|kefir|ice cream|gelato|sherbet|whipping/.test(text)) {
     return 'Dairy & Eggs';
   }
-  if (/\bbread\b|bun|roll|bagel|croissant|muffin|donut|doughnut|\bcake\b|cookie|pastry|\bpie\b|\btart\b|brownie|\bloaf\b|sourdough|pita|naan|tortilla|baguette|ciabatta|focaccia|bakery/.test(text)) {
+  if (/\bbread\b|\bbun\b|\broll\b|bagel|croissant|muffin|donut|doughnut|\bcake\b|cookie|pastry|\bpie\b|\btart\b|brownie|\bloaf\b|sourdough|pita|\bnaan\b|tortilla|baguette|ciabatta|focaccia|bakery/.test(text)) {
     return 'Bakery';
   }
-  if (/frozen|pizza|\bburrito\b|TV dinner/.test(text)) {
+  if (/frozen|pizza|\bburrito\b/.test(text)) {
     return 'Frozen';
   }
-  if (/beer|wine|spirit|whisky|whiskey|vodka|\bgin\b|rum|tequila|bourbon|scotch|brandy|cognac|champagne|prosecco|cider|\bale\b|lager|pilsner|stout|porter|seltzer|hard seltzer|cooler|liquor|liqueur|mead|sake|6-pack|12-pack|24-pack|can of beer|bottle of wine/.test(text)) {
-    return 'Alcohol';
-  }
-  if (/juice|water|sparkling|soda|\bpop\b|energy drink|sports drink|lemonade|iced tea|kombucha|smoothie|coca.cola|pepsi|sprite|7up|dr pepper|mountain dew|gatorade|vitamin water|beverage/.test(text)) {
+  if (/juice|\bwater\b|sparkling|soda|\bpop\b|energy drink|sports drink|lemonade|iced tea|kombucha|smoothie|coca.cola|pepsi|sprite|7up|dr pepper|mountain dew|gatorade|vitamin water|beverage/.test(text)) {
     return 'Beverages';
   }
-  if (/coffee|tea|espresso/.test(text)) {
+  if (/coffee|\btea\b|espresso/.test(text)) {
     return 'Beverages';
   }
   return 'Pantry';
@@ -138,17 +149,31 @@ function assignCategory(name, brand) {
 // Is this item food/drink/alcohol?
 // ---------------------------------------------------------------------------
 
+// Short keywords that need word-boundary matching to avoid false positives
+// (e.g. "ham" in "Hamilton", "wing" in "sewing", "nut" in "Nutribullet",
+//       "can" in "canvas", "water" in "watering", "roast" in "roaster")
+const WORD_BOUNDARY_FOOD_KW = new Set([
+  'ham','wing','nut','bun','roll','pie','tart','dill','mint','pear','plum',
+  'corn','beet','leek','kale','peas','egg','eggs','brie','feta','cod','oil',
+  'crab','clam','gin','rum','ale','pop','tea','jam','rye','oat',
+  'can','water','roast','fresh','lard','loin','rack','roe','spirit',
+]);
+
 function isFood(name, brand) {
   const text = (name + ' ' + (brand || '')).toLowerCase();
 
-  // Hard non-food signals
+  // Hard non-food signals — check first
   for (const kw of NON_FOOD_KEYWORDS) {
     if (text.includes(kw)) return false;
   }
 
   // Check food keywords
   for (const kw of FOOD_KEYWORDS) {
-    if (text.includes(kw)) return true;
+    if (WORD_BOUNDARY_FOOD_KW.has(kw)) {
+      if (new RegExp('\\b' + kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(text)) return true;
+    } else {
+      if (text.includes(kw)) return true;
+    }
   }
 
   return false;
@@ -190,8 +215,7 @@ for (const store of raw) {
     continue;
   }
 
-  // Normalize "Sobeys & Safeway Liquor" label
-  const displayName = storeName === 'Sobeys & Safeway Liquor' ? 'Safeway Liquor' : storeName;
+  const displayName = storeName;
 
   const storeStats = { kept: 0, dropped: 0 };
   stats[storeName] = storeStats;
@@ -218,12 +242,13 @@ for (const store of raw) {
   kept.sort((a, b) => b._score - a._score);
 
   // Per-store caps (generous for grocery stores, tight for drug/hardware)
+  // Canadian Tire: zero — keyword false-positives produce too much noise
   const caps = {
-    'Shoppers Drug Mart':      20,
-    'London Drugs':            15,
-    'Canadian Tire':           10,
-    'Costco':                  30,
-    'Wholesale Club':          30,
+    'Shoppers Drug Mart':      15,
+    'London Drugs':            10,
+    'Canadian Tire':            0,
+    'Costco':                  25,
+    'Wholesale Club':          25,
   };
   const cap = caps[storeName] ?? 40;
   const final = kept.slice(0, cap);
@@ -238,8 +263,37 @@ for (const store of raw) {
 }
 
 // ---------------------------------------------------------------------------
+// Staple detection — items that match user preferences get priority boost
+// ---------------------------------------------------------------------------
+const STAPLE_PATTERNS = [
+  /classico/i,
+  /scotch bonnet/i,
+  /\bpeppers?\b/i,
+  /\bmilk\b/i,
+  /\beggs?\b/i,
+  /\bbutter\b/i,
+  /siggi'?s/i,
+  /gorgonzola/i,
+  /balderson/i,
+  /swiss delice/i,
+  /que pasa/i,
+  /no.?name flour|no name.*flour|flour.*no.?name/i,
+];
+
+function isStaple(name, brand) {
+  const text = (name || '') + ' ' + (brand || '');
+  return STAPLE_PATTERNS.some(re => re.test(text));
+}
+
+function stapleScore(item) {
+  return isStaple(item.name, item.brand) ? 1000 : 0;
+}
+
+// ---------------------------------------------------------------------------
 // Group into categories
 // ---------------------------------------------------------------------------
+
+const CATEGORY_CAP = 20;
 
 const categories = {
   'Meat & Seafood': [],
@@ -249,12 +303,24 @@ const categories = {
   'Frozen':         [],
   'Pantry':         [],
   'Beverages':      [],
-  'Alcohol':        [],
 };
 
 for (const item of allKept) {
   const cat = assignCategory(item.name, item.brand);
-  categories[cat].push(item);
+  // Skip alcohol — user prefers to skip liquor store flyers
+  if (cat === 'Alcohol') continue;
+  if (categories[cat] !== undefined) categories[cat].push(item);
+  else categories['Pantry'].push(item);
+}
+
+// Rank each category: staples first, then by discount %, then just include
+for (const [cat, items] of Object.entries(categories)) {
+  items.sort((a, b) => {
+    const sa = stapleScore(a) + discountScore(a);
+    const sb = stapleScore(b) + discountScore(b);
+    return sb - sa;
+  });
+  categories[cat] = items.slice(0, CATEGORY_CAP);
 }
 
 // Remove empty categories
@@ -262,7 +328,21 @@ for (const cat of Object.keys(categories)) {
   if (categories[cat].length === 0) delete categories[cat];
 }
 
-const output = { date: TODAY, categories };
+// ---------------------------------------------------------------------------
+// Build highlights: staples on sale first, then biggest discount % deals
+// ---------------------------------------------------------------------------
+
+const allCurated = Object.values(categories).flat();
+
+// Score for highlights: staple match + discount %
+const highlightCandidates = allCurated
+  .filter(item => isStaple(item.name, item.brand) || discountScore(item) >= 20)
+  .map(item => ({ ...item, _hlScore: stapleScore(item) + discountScore(item) }))
+  .sort((a, b) => b._hlScore - a._hlScore)
+  .slice(0, 10)
+  .map(({ _hlScore, ...item }) => item);
+
+const output = { date: TODAY, categories, highlights: highlightCandidates };
 writeFileSync(OUTPUT, JSON.stringify(output, null, 2));
 
 // ---------------------------------------------------------------------------
