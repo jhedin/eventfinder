@@ -8,7 +8,7 @@ This file describes what kinds of events I'm interested in. The EventFinder agen
 
 **City**: Calgary, AB, Canada
 **Timezone**: America/Edmonton (MST/MDT)
-**Willing to travel**: Within Calgary city limits
+**Willing to travel**: Within Calgary city limits, and Canmore, AB
 
 ---
 
