@@ -266,9 +266,16 @@ for (const cat of CATEGORY_ORDER) {
   }
 }
 
+// ── Highlights — top staple deals sorted by discount % ───────────────────────
+const allCuratedItems = Object.values(finalCategories).flat();
+const highlights = allCuratedItems
+  .filter(i => i.staple)
+  .sort((a, b) => (b.discount_pct || 0) - (a.discount_pct || 0))
+  .slice(0, 10);
+
 // ── Output ────────────────────────────────────────────────────────────────────
 const today = new Date().toISOString().split('T')[0];
-const output = { date: today, categories: finalCategories };
+const output = { date: today, categories: finalCategories, highlights };
 writeFileSync('/tmp/eventfinder-flyer-curated.json', JSON.stringify(output, null, 2));
 
 // ── Summary ───────────────────────────────────────────────────────────────────
