@@ -10,21 +10,22 @@ for (const msg of digest.messages) {
     newMessages.push(msg);
     continue;
   }
-  const parts = msg.split('\n\n');
+  // Split at event boundaries (double newline before **)
+  const parts = msg.split(/\n(?=\*\*)/);
   let current = '';
   for (const part of parts) {
-    const sep = current ? '\n\n' : '';
+    const sep = current ? '\n' : '';
     if ((current + sep + part).length > MAX_LEN) {
-      if (current) newMessages.push(current);
+      if (current) newMessages.push(current.trim());
       current = part;
     } else {
       current += sep + part;
     }
   }
-  if (current) newMessages.push(current);
+  if (current.trim()) newMessages.push(current.trim());
 }
 
 digest.messages = newMessages;
 writeFileSync('/tmp/discord-digest.json', JSON.stringify(digest, null, 2));
 console.log(`Split into ${newMessages.length} messages`);
-newMessages.forEach((m, i) => console.log(`  msg ${i}: ${m.length} chars`));
+newMessages.forEach((m, i) => console.log(`  msg ${i + 1}: ${m.length} chars`));
