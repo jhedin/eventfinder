@@ -160,6 +160,7 @@ const importAll = db.transaction(() => {
 
         // Insert instances
         for (const inst of (event.instances || [])) {
+          if (!inst.date) continue;
           stmts.insertInstance.run(
             eventId,
             inst.date || null,
