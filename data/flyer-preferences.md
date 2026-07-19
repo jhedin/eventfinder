@@ -7,6 +7,7 @@
 - No restrictions
 
 ## Staples (always flag these when on sale)
+- Chicken thighs (boneless skinless)
 - Classico tomato sauces
 - Scotch bonnet peppers, peppers generally
 - Milk, eggs, butter

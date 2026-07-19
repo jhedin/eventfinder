@@ -31,6 +31,7 @@ const STAPLE_PATTERNS = [
   /\bno.?name.*flour\b/i,
   /\bflour\b.*no.?name/i,
   /^all.?purpose flour\b/i,
+  /\bchicken thigh/i,
 ];
 
 // ── Stores to skip entirely ───────────────────────────────────────────────────
