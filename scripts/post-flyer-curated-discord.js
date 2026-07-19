@@ -83,7 +83,9 @@ const CATEGORY_COLOR = {
 
 function formatLine(item) {
   const namePart   = item.name;
-  const pricePart  = item.price  ? `**${item.price}**`          : '';
+  const pricePart  = item.price       ? `**${item.price}**`
+                   : item.sale_story  ? `*${item.sale_story}*`
+                   : '';
   const origPart   = item.original_price ? ` ~~${item.original_price}~~` : '';
   const brandPart  = item.brand  ? ` *(${item.brand})*`         : '';
   const storePart  = ` @ ${item.store}`;

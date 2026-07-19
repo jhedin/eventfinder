@@ -42,6 +42,29 @@ async function fetchJSON(url) {
   return resp.json();
 }
 
+// Fetch all search-enriched items for a flyer (paginated), returning a map
+// of flyer_item_id → { sale_story, price_unit, current_price }.
+async function fetchSearchEnrichment(flyerId) {
+  const enrichment = {};
+  let offset = 0;
+  const pageSize = 150;
+  while (true) {
+    const url = `https://backflipp.wishabi.com/flipp/items/search?locale=en-ca&postal_code=${POSTAL_CODE}&flyer_ids[]=${flyerId}&count=${pageSize}&offset=${offset}`;
+    const data = await fetchJSON(url);
+    const items = data.items || [];
+    for (const item of items) {
+      enrichment[item.flyer_item_id] = {
+        sale_story:   item.sale_story   || null,
+        price_unit:   item.post_price_text || null,
+        current_price: item.current_price != null ? String(item.current_price) : null,
+      };
+    }
+    if (items.length < pageSize) break;
+    offset += pageSize;
+  }
+  return enrichment;
+}
+
 async function main() {
   console.log(`Fetching flyers for postal code ${POSTAL_CODE}...`);
   const flyersResp = await fetchJSON(
@@ -78,19 +101,28 @@ async function main() {
     process.stdout.write(`[${merchantName}] Flyer ${flyer.id} (${flyer.valid_from} to ${flyer.valid_to}) ... `);
 
     try {
-      const flyerData = await fetchJSON(`https://backflipp.wishabi.com/flipp/flyers/${flyer.id}`);
+      const [flyerData, enrichment] = await Promise.all([
+        fetchJSON(`https://backflipp.wishabi.com/flipp/flyers/${flyer.id}`),
+        fetchSearchEnrichment(flyer.id),
+      ]);
 
       const items = (flyerData.items || [])
         .filter(item => item.name && item.name.trim())
-        .map(item => ({
-          name: item.name,
-          brand: item.brand || null,
-          price: item.price || null,
-          original_price: item.original_price || null,
-          discount: item.discount || null,
-          image_url: item.cutout_image_url || null,
-          url: item.ttm_url || null,
-        }));
+        .map(item => {
+          const extra = enrichment[item.id] || {};
+          const price = item.price || extra.current_price || null;
+          return {
+            name: item.name,
+            brand: item.brand || null,
+            price: price,
+            price_unit: extra.price_unit || null,
+            original_price: item.original_price || null,
+            discount: item.discount || null,
+            sale_story: extra.sale_story || null,
+            image_url: item.cutout_image_url || null,
+            url: item.ttm_url || null,
+          };
+        });
 
       console.log(`${items.length} items`);
 

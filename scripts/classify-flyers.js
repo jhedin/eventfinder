@@ -138,11 +138,11 @@ function categorize(name, brand) {
 }
 
 // ── Price helpers ─────────────────────────────────────────────────────────────
-function fmtPrice(p) {
+function fmtPrice(p, unit) {
   if (!p && p !== 0) return null;
   const n = parseFloat(p);
-  if (isNaN(n)) return String(p);
-  return `$${n.toFixed(2)}`;
+  const str = isNaN(n) ? String(p) : `$${n.toFixed(2)}`;
+  return unit ? `${str}/${unit}` : str;
 }
 
 function discountPct(sale, original) {
@@ -194,8 +194,10 @@ for (const store of raw) {
     const pct = discountPct(salePrice, origPrice);
     const staple = isStaple(name);
 
-    // Skip items with no price unless they're a staple (then include anyway)
-    if (!salePrice && !staple) {
+    const saleStory = item.sale_story || null;
+
+    // Skip items with no price and no deal text unless they're a staple
+    if (!salePrice && !saleStory && !staple) {
       stats[storeName].dropped++;
       continue;
     }
@@ -203,9 +205,10 @@ for (const store of raw) {
     const entry = {
       name,
       brand: brand || null,
-      price: fmtPrice(salePrice),
+      price: fmtPrice(salePrice, item.price_unit),
       original_price: origPrice ? fmtPrice(origPrice) : null,
       discount_pct: pct || null,
+      sale_story: saleStory,
       store: storeName,
       staple,
       _raw_price: parseFloat(salePrice) || 0,
