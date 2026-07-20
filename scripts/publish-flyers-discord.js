@@ -21,6 +21,7 @@ const CATEGORY_META = {
   'Bakery':        { emoji: '🍞', color: 15105570 },
   'Frozen':        { emoji: '🧊', color: 1752220  },
   'Dairy':         { emoji: '🧀', color: 16777215 },
+  'Dairy & Eggs':  { emoji: '🧀', color: 16777215 },
   'Produce':       { emoji: '🥬', color: 3066993  },
   'Meat & Seafood':{ emoji: '🥩', color: 15158332 },
 };
@@ -28,7 +29,7 @@ const CATEGORY_META = {
 // Posting order: lowest priority first (they end up at top of channel)
 const POST_ORDER = [
   'Beverages', 'Pantry', 'Bakery', 'Frozen',
-  'Dairy', 'Produce',
+  'Dairy', 'Dairy & Eggs', 'Produce',
   'Meat & Seafood',
 ];
 

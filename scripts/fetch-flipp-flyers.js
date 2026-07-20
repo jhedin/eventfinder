@@ -36,33 +36,24 @@ const MERCHANTS = {
   6373: 'T&T Supermarket',
 };
 
-async function fetchJSON(url) {
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${url}`);
-  return resp.json();
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(`Request timed out after ${ms}ms`)), ms)),
+  ]);
 }
 
-// Fetch all search-enriched items for a flyer (paginated), returning a map
-// of flyer_item_id → { sale_story, price_unit, current_price }.
-async function fetchSearchEnrichment(flyerId) {
-  const enrichment = {};
-  let offset = 0;
-  const pageSize = 150;
-  while (true) {
-    const url = `https://backflipp.wishabi.com/flipp/items/search?locale=en-ca&postal_code=${POSTAL_CODE}&flyer_ids[]=${flyerId}&count=${pageSize}&offset=${offset}`;
-    const data = await fetchJSON(url);
-    const items = data.items || [];
-    for (const item of items) {
-      enrichment[item.flyer_item_id] = {
-        sale_story:   item.sale_story   || null,
-        price_unit:   item.post_price_text || null,
-        current_price: item.current_price != null ? String(item.current_price) : null,
-      };
-    }
-    if (items.length < pageSize) break;
-    offset += pageSize;
-  }
-  return enrichment;
+async function fetchJSON(url) {
+  const resp = await withTimeout(fetch(url), 30_000);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} for ${url}`);
+  return withTimeout(resp.json(), 30_000);
+}
+
+// The search enrichment endpoint (flipp/items/search) ignores the flyer_ids[] filter
+// and returns items from unrelated flyers — the enrichment map never matches.
+// Enrichment is skipped; flyer data alone provides all needed fields.
+async function fetchSearchEnrichment(_flyerId) {
+  return {};
 }
 
 async function main() {

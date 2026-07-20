@@ -111,6 +111,18 @@ const NON_FOOD_KEYWORDS = [
   'chair','lawn chair','camp chair','camping chair','cooler bag','ice chest',
   'hard cooler','beach tote','backpack','tote bag',
   'lawn','patio','outdoor furniture','deck','tent','sleeping bag',
+  // Pet treats (brand names containing food words)
+  'milk-bone','milkbone','dog treat','cat treat','dog chew','cat chew',
+  // Toys containing water
+  'water blaster','water balloon','squirt gun','super soaker',
+  // Cosmetics containing food words
+  'lip gloss','gloss bling','gloss serum','butter gloss',
+  'bath product','bath bomb','bath soak','lip balm','lip liner','lip oil',
+  // Kitchenware containing food words
+  'cake pan','silicone pan','silcone pan','glass pan','baking pan','baking sheet',
+  'can cooler','bottle cooler','can koozie',
+  // Appliances
+  'sodastream','water maker','sparkling water maker',
 ];
 
 // ---------------------------------------------------------------------------
