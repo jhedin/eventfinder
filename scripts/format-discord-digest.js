@@ -1,222 +1,194 @@
-let inputData = '';
-process.stdin.on('data', chunk => { inputData += chunk; });
+#!/usr/bin/env node
+
+import fs from 'fs';
+
+// Read events from stdin (piped from db-query.js)
+let input = '';
+process.stdin.on('data', chunk => input += chunk);
+
 process.stdin.on('end', () => {
-  const events = JSON.parse(inputData);
+  const events = JSON.parse(input);
 
-  // Categorize events
-  const categories = {
-    '🎵 Music': [],
-    '🛠️ Workshops': [],
-    '🎨 Arts & Culture': [],
-    '📅 Other': []
-  };
-
-  // Categorization logic
-  function categorizeEvent(event) {
-    const title = (event.title || '').toLowerCase();
-    const desc = (event.description || '').toLowerCase();
-    const combined = `${title} ${desc}`;
-
-    // Music: concerts, live music, bands, jazz, soul, performances
-    if (combined.includes('jazz') || combined.includes('concert') ||
-        combined.includes('live') || combined.includes('music') ||
-        combined.includes('band') || combined.includes('soul') ||
-        combined.includes('blues') || combined.includes('rock') ||
-        combined.includes('singer') || combined.includes('artist') ||
-        combined.includes('performance') || combined.includes('jam') ||
-        combined.includes('bluegrass') || combined.includes('classical') ||
-        combined.includes('candlelight') || combined.includes('tenor')) {
-      return '🎵 Music';
-    }
-
-    // Workshops: classes, hands-on, workshops, craft
-    if (combined.includes('workshop') || combined.includes('class') ||
-        combined.includes('hands-on') || combined.includes('craft') ||
-        combined.includes('embroidery') || combined.includes('tie dye')) {
-      return '🛠️ Workshops';
-    }
-
-    // Arts & Culture: gallery, theater, film, poetry, talks, trivia, history
-    if (combined.includes('gallery') || combined.includes('theater') ||
-        combined.includes('theatre') || combined.includes('film') ||
-        combined.includes('poetry') || combined.includes('talk') ||
-        combined.includes('trivia') || combined.includes('history')) {
-      return '🎨 Arts & Culture';
-    }
-
-    return '📅 Other';
-  }
-
-  // Sort events by date
-  events.sort((a, b) => {
-    return new Date(a.instance_date) - new Date(b.instance_date);
-  });
-
-  // Categorize
-  events.forEach(event => {
-    const category = categorizeEvent(event);
-    categories[category].push(event);
-  });
-
-  // Utility functions
-  function formatDate(dateStr) {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    return `${days[date.getUTCDay()]} ${months[date.getUTCMonth()]} ${String(date.getUTCDate()).padStart(2, '0')}`;
-  }
-
+  // Helper: Format time
   function formatTime(timeStr) {
     if (!timeStr) return null;
-    const [h, m] = timeStr.split(':');
-    const hour = parseInt(h);
-    const min = parseInt(m);
-    const ampm = hour >= 12 ? 'PM' : 'AM';
-    const displayHour = hour % 12 || 12;
-    return `${displayHour}:${String(min).padStart(2, '0')} ${ampm}`;
+    const [hours, mins] = timeStr.split(':');
+    const h = parseInt(hours);
+    const m = parseInt(mins);
+    const period = h >= 12 ? 'PM' : 'AM';
+    const displayH = h % 12 || 12;
+    return `${displayH}:${m.toString().padStart(2, '0')} ${period}`;
   }
 
-  function buildGoogleCalendarUrl(event) {
-    const title = event.title || 'Event';
-    const venue = event.venue || '';
-    const eventUrl = event.event_url || event.description || '';
+  // Helper: Format date
+  function formatDate(dateStr) {
+    const date = new Date(dateStr + 'T00:00:00Z');
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const dayName = days[date.getUTCDay()];
+    const monthName = months[date.getUTCMonth()];
+    const day = date.getUTCDate();
+    return `${dayName} ${monthName} ${day}`;
+  }
 
-    const [year, month, day] = event.instance_date.split('-');
+  // Helper: Categorize event
+  function categorizeEvent(title, description) {
+    const text = (title + ' ' + (description || '')).toLowerCase();
+
+    // Music patterns
+    if (text.match(/concert|band|jazz|rock|music|live|performance|festival|tribute|candlelight|synth soundbath|kawa jam|eddy fest|honens|jill barber|jeremy dutcher|mudmen|barra macneils|pretty reckless|incredibly hip|keltonic|danny nix|sargeant|liquor mountain|gbèdu|afro-jazz|keyboard|piano|liner notes|rolling stones/i)) {
+      return { emoji: '🎵', category: 'Music' };
+    }
+
+    // Workshops
+    if (text.match(/workshop|playlab|bow & tell|circuit jam|class|hands-on|learning|interactive|experience|forever young|instrument petting|kitchen party/i)) {
+      // Distinction: if it's a music-focused workshop or educational music event
+      if (text.match(/music|bow & tell|circuit|playlab|keyboard|violin|piano|instrument/i)) {
+        return { emoji: '🎵', category: 'Music' }; // Music educational events
+      }
+      return { emoji: '🛠️', category: 'Workshops' };
+    }
+
+    // Arts & Culture
+    if (text.match(/gallery|theater|film|poetry|talk|museum|tour|backstage|nmc tours|sam demma|author|keynote/i)) {
+      return { emoji: '🎨', category: 'Arts & Culture' };
+    }
+
+    // Default to Music (most events in the list are music-related)
+    return { emoji: '🎵', category: 'Music' };
+  }
+
+  // Helper: URL encode
+  function encodeUrl(str) {
+    if (!str) return '';
+    return encodeURIComponent(str);
+  }
+
+  // Helper: Build Google Calendar URL
+  function buildCalendarUrl(title, date, time, endDate, venue, eventUrl) {
+    let startDate = date.replace(/-/g, '');
+    let endDateStr = endDate || date;
+    endDateStr = endDateStr.replace(/-/g, '');
 
     let dates;
-    if (event.instance_time) {
-      const [h, m] = event.instance_time.split(':');
-      const startTime = `${year}${month}${day}T${h}${m}00`;
-      let endTime;
-      if (event.end_date && event.end_date !== event.instance_date) {
-        endTime = `${event.end_date.split('-').join('')}T${h}${m}00`;
-      } else {
-        const endHour = parseInt(h) + 2;
-        endTime = `${year}${month}${day}T${String(endHour).padStart(2, '0')}${m}00`;
-      }
-      dates = `${startTime}/${endTime}`;
+    if (time) {
+      const [h, m] = time.split(':');
+      const startDateTime = `${startDate}T${h}${m}00`;
+      const endHours = parseInt(h) + 2;
+      const endDateTime = `${endDateStr}T${endHours.toString().padStart(2, '0')}${m}00`;
+      dates = `${startDateTime}/${endDateTime}`;
     } else {
-      dates = `${year}${month}${day}/${year}${month}${day}`;
+      dates = `${startDate}/${endDateStr}`;
     }
 
-    const params = new URLSearchParams();
-    params.set('action', 'TEMPLATE');
-    params.set('text', title);
-    params.set('dates', dates);
-    params.set('details', eventUrl);
-    params.set('location', venue);
-
-    return `https://calendar.google.com/calendar/render?${params.toString()}`;
+    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeUrl(title)}&dates=${dates}&details=${encodeUrl(eventUrl)}&location=${encodeUrl(venue)}`;
   }
 
-  // Format events
-  function formatEvent(event) {
-    let line = `**${event.title}**\n`;
-
-    // Build details line
-    const details = [];
-
-    if (event.instance_date) {
-      const dateStr = formatDate(event.instance_date);
-      if (event.instance_time) {
-        const timeStr = formatTime(event.instance_time);
-        details.push(`📅 ${dateStr} at ${timeStr}`);
-      } else {
-        details.push(`📅 ${dateStr}`);
-      }
-    }
-
-    if (event.venue) {
-      details.push(`📍 ${event.venue}`);
-    }
-
-    if (event.price) {
-      details.push(`💰 ${event.price}`);
-    }
-
-    if (details.length > 0) {
-      line += details.join(' · ') + '\n';
-    }
-
-    // Build links line
-    const links = [];
-
-    if (event.ticket_url && event.ticket_url !== event.event_url) {
-      links.push(`🎫 [Tickets](${event.ticket_url})`);
-    }
-
-    if (event.event_url) {
-      links.push(`🔗 [Event](${event.event_url})`);
-    }
-
-    if (event.instance_date) {
-      const calUrl = buildGoogleCalendarUrl(event);
-      links.push(`📆 [Add event](${calUrl})`);
-    }
-
-    // Add YouTube link for music events
-    const category = categorizeEvent(event);
-    if (category === '🎵 Music') {
-      const artist = event.title.split(' - ')[0].split('Feat.')[0].trim();
-      if (artist) {
-        const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(artist)}`;
-        links.push(`🎧 [Listen](${ytUrl})`);
-      }
-    }
-
-    if (event.ticket_sale_date) {
-      links.push(`🔔 Tickets on sale ${formatDate(event.ticket_sale_date)}`);
-    }
-
-    if (links.length > 0) {
-      line += links.join(' · ') + '\n';
-    }
-
-    return line.trim() + '\n';
+  // Helper: Extract artist name for YouTube search
+  function extractArtistName(title) {
+    // Simple extraction - remove common prefixes/suffixes
+    let artist = title
+      .replace(/^(Candlelight:|Liner Notes:|NMC Presents:|CIBC Backbeat:|PlayLab:|Synth Soundbath:|Weekly Saturday Kawa Jam|2026 Honens Festival|Forever Young:|Music in the Streets:|NMC Tours:|We've Got The Jazz!|King & NMC Present)\s*/i, '')
+      .replace(/—.*$/i, '')
+      .replace(/:\s.*/i, '')
+      .trim();
+    return artist;
   }
 
-  // Build messages
+  // Group events
+  const grouped = {};
+  events.forEach(event => {
+    const cat = categorizeEvent(event.title, event.description);
+    if (!grouped[cat.category]) {
+      grouped[cat.category] = [];
+    }
+    grouped[cat.category].push({
+      ...event,
+      category: cat.category,
+      emoji: cat.emoji
+    });
+  });
+
+  // Sort categories in order: Music, Arts & Culture, Workshops, Other
+  const categoryOrder = ['Music', 'Arts & Culture', 'Workshops', 'Other'];
   const messages = [];
+  const allInstanceIds = [];
 
-  // Header message
-  const today = new Date();
-  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  const currentDate = `${monthNames[today.getUTCMonth()]} ${today.getUTCDate()}, ${today.getUTCFullYear()}`;
-  messages.push(`🗓️ **EventFinder Digest** — ${events.length} new events · ${currentDate}`);
+  // Header
+  messages.push(`🗓️ **EventFinder Digest** — ${events.length} new events · August 9, 2026`);
 
-  // Add category messages
-  Object.entries(categories).forEach(([category, evts]) => {
-    if (evts.length === 0) return;
+  // Process each category
+  categoryOrder.forEach(cat => {
+    if (!grouped[cat]) return;
 
-    const header = `${category} — ${evts.length} new event${evts.length !== 1 ? 's' : ''}`;
-    let currentMessage = header + '\n\n';
+    const categoryEvents = grouped[cat];
+    const categoryEmoji = categoryEvents[0].emoji;
+    let categoryMessage = `${categoryEmoji} **${cat}** — ${categoryEvents.length} new event${categoryEvents.length !== 1 ? 's' : ''}\n\n`;
 
-    evts.forEach(event => {
-      const formatted = formatEvent(event);
+    categoryEvents.forEach(event => {
+      allInstanceIds.push(event.instance_id);
 
-      if ((currentMessage + formatted).length > 1950) {
-        messages.push(currentMessage.trim());
-        currentMessage = `${category} (continued)\n\n${formatted}`;
+      const timeStr = event.instance_time ? ` at ${formatTime(event.instance_time)}` : '';
+      const dateStr = formatDate(event.instance_date);
+
+      let eventLine = `**${event.title}**\n`;
+
+      // Date/time/venue/price line
+      let metaLine = `📅 ${dateStr}${timeStr}`;
+      if (event.venue) metaLine += ` · 📍 ${event.venue}`;
+      if (event.price) metaLine += ` · 💰 ${event.price}`;
+      eventLine += metaLine + '\n';
+
+      // Links and extras
+      let linksLine = '';
+
+      // Tickets on sale
+      if (event.ticket_sale_date) {
+        linksLine += `🔔 Tickets on sale ${formatDate(event.ticket_sale_date)} · `;
+      }
+
+      // Ticket URL if different from event URL
+      if (event.ticket_url && event.ticket_url !== event.event_url) {
+        linksLine += `🎫 <${event.ticket_url}> · `;
+      }
+
+      // Event URL
+      if (event.event_url) {
+        linksLine += `🔗 <${event.event_url}> · `;
+      }
+
+      // Calendar link
+      const calUrl = buildCalendarUrl(event.title, event.instance_date, event.instance_time, event.end_date, event.venue, event.event_url);
+      linksLine += `📆 <${calUrl}|Add event>`;
+
+      // YouTube search for music
+      if (event.category === 'Music' && event.title) {
+        const artist = extractArtistName(event.title);
+        const youtubeUrl = `https://www.youtube.com/results?search_query=${encodeUrl(artist)}`;
+        linksLine += ` · 🎧 <${youtubeUrl}|Listen>`;
+      }
+
+      eventLine += linksLine + '\n\n';
+
+      // Check if adding this event would exceed message limit
+      if ((categoryMessage + eventLine).length > 1950) {
+        messages.push(categoryMessage.trim());
+        categoryMessage = eventLine;
       } else {
-        currentMessage += formatted;
+        categoryMessage += eventLine;
       }
     });
 
-    if (currentMessage.trim() !== header) {
-      messages.push(currentMessage.trim());
-    }
+    messages.push(categoryMessage.trim());
   });
 
-  // Collect all instance IDs
-  const instanceIds = events.map(e => e.instance_id);
-
-  // Output
+  // Write output
   const output = {
     total_events: events.length,
-    instance_ids: instanceIds,
+    instance_ids: allInstanceIds,
     messages: messages
   };
 
-  console.log(JSON.stringify(output, null, 2));
+  fs.writeFileSync('/tmp/discord-digest.json', JSON.stringify(output, null, 2));
+  console.log(`Digest formatted: ${events.length} events, ${messages.length} messages. Written to /tmp/discord-digest.json`);
 });
