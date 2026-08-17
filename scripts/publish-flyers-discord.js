@@ -122,15 +122,15 @@ for (const cat of POST_ORDER) {
 
 // 5. Highlights — best staple + highest-discount items
 const allItems = Object.values(curated.categories).flat();
-const stapleItems = allItems.filter(i => i.staple);
+const stapleItems = allItems.filter(i => i.is_staple);
 const discountItems = allItems
-  .filter(i => !i.staple && i.discount_pct)
+  .filter(i => !i.is_staple && i.discount_pct)
   .sort((a, b) => (b.discount_pct || 0) - (a.discount_pct || 0))
   .slice(0, 5);
 
 // Also add top 3 meat deals by absolute price drop (staples or not)
 const meatDeals = (curated.categories['Meat & Seafood'] || [])
-  .filter(i => !i.staple)
+  .filter(i => !i.is_staple)
   .slice(0, 3);
 
 const highlightCandidates = [...stapleItems, ...discountItems, ...meatDeals];
