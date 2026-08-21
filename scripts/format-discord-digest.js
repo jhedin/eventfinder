@@ -175,7 +175,7 @@ const messages = [];
 
 // Header message
 const total = events.length;
-messages.push(`🗓️ **EventFinder Digest** — ${total} new events · August 19, 2026`);
+messages.push(`🗓️ **EventFinder Digest** — ${total} new events · August 21, 2026`);
 
 // Music events
 if (grouped.music.length > 0) {
