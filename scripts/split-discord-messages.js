@@ -1,31 +1,85 @@
 #!/usr/bin/env node
+// Reads /tmp/discord-digest.json, splits any message > MAX_LEN chars at event boundaries,
+// and writes the split chunks to a specified output file (default: /tmp/discord-retry.json).
+// Only outputs the replacement chunks for oversized messages — not the already-posted ones.
+//
+// Usage: node scripts/split-discord-messages.js [indices...] [--out FILE]
+//   indices: 0-based message indices to split (default: all oversized)
+//   --out FILE: output file path (default: /tmp/discord-retry.json)
+
 import { readFileSync, writeFileSync } from 'fs';
 
 const MAX_LEN = 1950;
-const digest = JSON.parse(readFileSync('/tmp/discord-digest.json', 'utf8'));
+const DIGEST_FILE = '/tmp/discord-digest.json';
 
-const newMessages = [];
-for (const msg of digest.messages) {
-  if (msg.length <= MAX_LEN) {
-    newMessages.push(msg);
-    continue;
-  }
-  // Split at event boundaries (double newline before **)
-  const parts = msg.split(/\n(?=\*\*)/);
+const args = process.argv.slice(2);
+let outFile = '/tmp/discord-retry.json';
+const outIdx = args.indexOf('--out');
+if (outIdx !== -1) {
+  outFile = args[outIdx + 1];
+  args.splice(outIdx, 2);
+}
+const targetIndices = args.map(Number).filter(n => !isNaN(n));
+
+const digest = JSON.parse(readFileSync(DIGEST_FILE, 'utf8'));
+const messages = digest.messages ?? [];
+
+function splitMessage(msg) {
+  if (msg.length <= MAX_LEN) return [msg];
+
+  const chunks = [];
+  // Split at event boundaries: "\n\n**" marks the start of each event
+  const parts = msg.split(/(?=\n\n\*\*)/);
+
   let current = '';
+  let isFirstChunk = true;
+
   for (const part of parts) {
-    const sep = current ? '\n' : '';
-    if ((current + sep + part).length > MAX_LEN) {
-      if (current) newMessages.push(current.trim());
-      current = part;
+    const candidate = current + part;
+    if (candidate.length <= MAX_LEN) {
+      current = candidate;
     } else {
-      current += sep + part;
+      if (current) chunks.push(current);
+      // Start a continuation chunk
+      if (!isFirstChunk) {
+        current = '(continued)' + part;
+      } else {
+        current = part;
+      }
     }
+    isFirstChunk = false;
   }
-  if (current.trim()) newMessages.push(current.trim());
+  if (current) chunks.push(current);
+  return chunks;
 }
 
-digest.messages = newMessages;
-writeFileSync('/tmp/discord-digest.json', JSON.stringify(digest, null, 2));
-console.log(`Split into ${newMessages.length} messages`);
-newMessages.forEach((m, i) => console.log(`  msg ${i + 1}: ${m.length} chars`));
+const indicesToSplit = targetIndices.length > 0
+  ? targetIndices
+  : messages.map((m, i) => m.length > MAX_LEN ? i : -1).filter(i => i >= 0);
+
+if (indicesToSplit.length === 0) {
+  console.log('No oversized messages found.');
+  process.exit(0);
+}
+
+const retryMessages = [];
+for (const idx of indicesToSplit) {
+  const msg = messages[idx];
+  if (!msg) {
+    console.warn(`Index ${idx} out of range, skipping`);
+    continue;
+  }
+  console.log(`Message ${idx + 1}: ${msg.length} chars → splitting...`);
+  const chunks = splitMessage(msg);
+  console.log(`  Split into ${chunks.length} chunks: ${chunks.map(c => c.length + ' chars').join(', ')}`);
+  retryMessages.push(...chunks);
+}
+
+const retryDigest = {
+  total_events: digest.total_events,
+  instance_ids: digest.instance_ids,
+  messages: retryMessages,
+};
+
+writeFileSync(outFile, JSON.stringify(retryDigest, null, 2));
+console.log(`Written ${retryMessages.length} messages to ${outFile}`);
