@@ -1,115 +1,114 @@
 #!/usr/bin/env node
 /**
- * Phase 2.5 — Store curated flyer items in the database.
- * Reads /tmp/eventfinder-flyer-curated.json and /tmp/eventfinder-flyer-batch-flipp.json
- * Inserts sources (type=flyer) and flyer_items with INSERT OR IGNORE deduplication.
+ * Store curated flyer items in the database.
+ * Reads: /tmp/eventfinder-flyer-curated.json, /tmp/eventfinder-flyer-batch-flipp.json
+ * Writes: data/eventfinder.db
  */
 
 import { readFileSync } from 'fs';
 import { createHash } from 'crypto';
 import Database from 'better-sqlite3';
 
-const curated = JSON.parse(readFileSync('/tmp/eventfinder-flyer-curated.json', 'utf8'));
-const raw = JSON.parse(readFileSync('/tmp/eventfinder-flyer-batch-flipp.json', 'utf8'));
+const CURATED_PATH = '/tmp/eventfinder-flyer-curated.json';
+const RAW_PATH = '/tmp/eventfinder-flyer-batch-flipp.json';
+const DB_PATH = 'data/eventfinder.db';
 
-// Build lookup: store_name -> { sale_start, sale_end, items: Map<name, image_url> }
-const storeMeta = {};
+const curated = JSON.parse(readFileSync(CURATED_PATH, 'utf8'));
+const raw = JSON.parse(readFileSync(RAW_PATH, 'utf8'));
+
+// Build a lookup: store_name -> { sale_start, sale_end, items by normalized name }
+const rawIndex = {};
 for (const store of raw) {
-  const items = new Map();
+  const byName = {};
   for (const item of store.items) {
-    const key = (item.name || '').trim().toLowerCase();
-    if (!items.has(key)) {
-      items.set(key, item.image_url || null);
+    if (item.name) {
+      const key = item.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      byName[key] = item;
     }
   }
-  storeMeta[store.store_name] = {
-    sale_start: store.sale_start ? store.sale_start.split('T')[0] : null,
-    sale_end: store.sale_end ? store.sale_end.split('T')[0] : null,
-    items,
+  rawIndex[store.store_name] = {
+    sale_start: store.sale_start,
+    sale_end: store.sale_end,
+    byName,
   };
 }
 
-const db = new Database('data/eventfinder.db');
+function itemHash(itemName, brand, salePrice, sourceId, saleEnd) {
+  return createHash('sha256')
+    .update([itemName, brand || '', salePrice, String(sourceId), saleEnd || ''].join('|'))
+    .digest('hex')
+    .slice(0, 64);
+}
 
-// Ensure sources exist for each flyer store
-const upsertSource = db.prepare(`
-  INSERT INTO sources (url, name, type)
-  VALUES (?, ?, 'flyer')
-  ON CONFLICT(url) DO UPDATE SET name=excluded.name
+const db = new Database(DB_PATH);
+
+const ensureSource = db.prepare(`
+  INSERT INTO sources (url, name, type, active)
+  VALUES (?, ?, 'flyer', 1)
+  ON CONFLICT(url) DO UPDATE SET active=1
+  RETURNING id
 `);
 
 const getSourceId = db.prepare(`SELECT id FROM sources WHERE url = ?`);
 
 const insertItem = db.prepare(`
   INSERT OR IGNORE INTO flyer_items
-    (item_hash, item_name, brand, sale_price, regular_price, category,
-     sale_start, sale_end, image_url, source_id, source_url)
+    (item_hash, item_name, brand, sale_price, regular_price, category, sale_start, sale_end, image_url, source_id, source_url)
   VALUES
-    (@item_hash, @item_name, @brand, @sale_price, @regular_price, @category,
-     @sale_start, @sale_end, @image_url, @source_id, @source_url)
+    (@item_hash, @item_name, @brand, @sale_price, @regular_price, @category, @sale_start, @sale_end, @image_url, @source_id, @source_url)
 `);
 
-function makeHash(...parts) {
-  return createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 16);
-}
-
 let stored = 0;
-let skipped = 0;
+let duplicates = 0;
 
-// Collect unique stores from curated data
-const storeNames = new Set();
-for (const items of Object.values(curated.categories)) {
-  for (const item of items) storeNames.add(item.store);
-}
+const allItems = Object.entries(curated.categories).flatMap(([category, items]) =>
+  items.map(i => ({ ...i, category }))
+);
 
-// Ensure sources
-for (const storeName of storeNames) {
-  const url = `flipp://${storeName.toLowerCase().replace(/\s+/g, '-')}`;
-  upsertSource.run(url, storeName);
-}
+db.transaction(() => {
+  for (const item of allItems) {
+    const storeName = item.store;
+    const storeUrl = `flipp://${storeName.toLowerCase().replace(/\s+/g, '-')}`;
 
-// Insert items
-const insertMany = db.transaction(() => {
-  for (const [category, items] of Object.entries(curated.categories)) {
-    for (const item of items) {
-      const storeName = item.store;
-      const url = `flipp://${storeName.toLowerCase().replace(/\s+/g, '-')}`;
-      const sourceRow = getSourceId.get(url);
-      if (!sourceRow) continue;
-      const sourceId = sourceRow.id;
+    // Ensure source exists
+    let sourceRow = getSourceId.get(storeUrl);
+    if (!sourceRow) {
+      const inserted = ensureSource.get(storeUrl, storeName);
+      sourceRow = inserted || getSourceId.get(storeUrl);
+    }
+    const sourceId = sourceRow.id;
 
-      const meta = storeMeta[storeName] || {};
-      const saleEnd = meta.sale_end || null;
-      const imageUrl = meta.items?.get((item.name || '').trim().toLowerCase()) || null;
+    // Cross-reference raw data for sale dates and image_url
+    const storeRaw = rawIndex[storeName] || {};
+    const nameKey = item.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const rawItem = (storeRaw.byName || {})[nameKey] || {};
+    const saleStart = storeRaw.sale_start || null;
+    const saleEnd = storeRaw.sale_end || null;
+    const imageUrl = rawItem.image_url || null;
 
-      const hash = makeHash(
-        item.name || '',
-        item.brand || '',
-        item.price || '',
-        String(sourceId),
-        saleEnd || ''
-      );
+    const hash = itemHash(item.name, item.brand || null, item.price, sourceId, saleEnd);
 
-      const result = insertItem.run({
-        item_hash: hash,
-        item_name: item.name,
-        brand: item.brand || null,
-        sale_price: item.price || 'n/a',
-        regular_price: item.original_price || null,
-        category,
-        sale_start: meta.sale_start || null,
-        sale_end: saleEnd,
-        image_url: imageUrl,
-        source_id: sourceId,
-        source_url: url,
-      });
+    const result = insertItem.run({
+      item_hash: hash,
+      item_name: item.name,
+      brand: item.brand || null,
+      sale_price: item.price,
+      regular_price: item.original_price || null,
+      category: item.category,
+      sale_start: saleStart,
+      sale_end: saleEnd,
+      image_url: imageUrl,
+      source_id: sourceId,
+      source_url: storeUrl,
+    });
 
-      if (result.changes > 0) stored++;
-      else skipped++;
+    if (result.changes > 0) {
+      stored++;
+    } else {
+      duplicates++;
     }
   }
-});
+})();
 
-insertMany();
-
-console.log(`${stored} items stored, ${skipped} duplicates skipped`);
+console.log(`\n=== Phase 2.5: Store ===`);
+console.log(`${stored} items stored, ${duplicates} duplicates skipped`);
