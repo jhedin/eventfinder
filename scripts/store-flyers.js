@@ -1,114 +1,79 @@
 #!/usr/bin/env node
-/**
- * Store curated flyer items in the database.
- * Reads: /tmp/eventfinder-flyer-curated.json, /tmp/eventfinder-flyer-batch-flipp.json
- * Writes: data/eventfinder.db
- */
+// Store curated flyer items into the SQLite database
 
 import { readFileSync } from 'fs';
 import { createHash } from 'crypto';
 import Database from 'better-sqlite3';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DB_PATH = resolve(__dirname, '../data/eventfinder.db');
 const CURATED_PATH = '/tmp/eventfinder-flyer-curated.json';
 const RAW_PATH = '/tmp/eventfinder-flyer-batch-flipp.json';
-const DB_PATH = 'data/eventfinder.db';
 
 const curated = JSON.parse(readFileSync(CURATED_PATH, 'utf8'));
 const raw = JSON.parse(readFileSync(RAW_PATH, 'utf8'));
 
-// Build a lookup: store_name -> { sale_start, sale_end, items by normalized name }
-const rawIndex = {};
+// Build a lookup from store name -> sale dates
+const storeDates = {};
 for (const store of raw) {
-  const byName = {};
-  for (const item of store.items) {
-    if (item.name) {
-      const key = item.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-      byName[key] = item;
-    }
-  }
-  rawIndex[store.store_name] = {
-    sale_start: store.sale_start,
-    sale_end: store.sale_end,
-    byName,
-  };
+  storeDates[store.store_name] = { sale_start: store.sale_start, sale_end: store.sale_end };
 }
-
-function itemHash(itemName, brand, salePrice, sourceId, saleEnd) {
-  return createHash('sha256')
-    .update([itemName, brand || '', salePrice, String(sourceId), saleEnd || ''].join('|'))
-    .digest('hex')
-    .slice(0, 64);
-}
+// Alias for Superstore display name
+storeDates['Superstore'] = storeDates['Real Canadian Superstore'];
 
 const db = new Database(DB_PATH);
 
-const ensureSource = db.prepare(`
-  INSERT INTO sources (url, name, type, active)
-  VALUES (?, ?, 'flyer', 1)
-  ON CONFLICT(url) DO UPDATE SET active=1
-  RETURNING id
-`);
-
-const getSourceId = db.prepare(`SELECT id FROM sources WHERE url = ?`);
-
-const insertItem = db.prepare(`
-  INSERT OR IGNORE INTO flyer_items
-    (item_hash, item_name, brand, sale_price, regular_price, category, sale_start, sale_end, image_url, source_id, source_url)
-  VALUES
-    (@item_hash, @item_name, @brand, @sale_price, @regular_price, @category, @sale_start, @sale_end, @image_url, @source_id, @source_url)
-`);
-
 let stored = 0;
-let duplicates = 0;
-
-const allItems = Object.entries(curated.categories).flatMap(([category, items]) =>
-  items.map(i => ({ ...i, category }))
-);
+let skipped = 0;
 
 db.transaction(() => {
-  for (const item of allItems) {
-    const storeName = item.store;
-    const storeUrl = `flipp://${storeName.toLowerCase().replace(/\s+/g, '-')}`;
+  for (const [category, items] of Object.entries(curated.categories)) {
+    for (const item of items) {
+      const storeName = item.store;
 
-    // Ensure source exists
-    let sourceRow = getSourceId.get(storeUrl);
-    if (!sourceRow) {
-      const inserted = ensureSource.get(storeUrl, storeName);
-      sourceRow = inserted || getSourceId.get(storeUrl);
-    }
-    const sourceId = sourceRow.id;
+      // Ensure flyer source row exists
+      const sourceUrl = `flipp://${storeName.toLowerCase().replace(/\s+/g, '-')}`;
+      let source = db.prepare('SELECT id FROM sources WHERE url = ?').get(sourceUrl);
+      if (!source) {
+        const info = db.prepare(
+          "INSERT INTO sources (name, url, type, active) VALUES (?, ?, 'flyer', 1)"
+        ).run(storeName, sourceUrl);
+        source = { id: info.lastInsertRowid };
+      }
 
-    // Cross-reference raw data for sale dates and image_url
-    const storeRaw = rawIndex[storeName] || {};
-    const nameKey = item.name.toLowerCase().replace(/[^a-z0-9]/g, '');
-    const rawItem = (storeRaw.byName || {})[nameKey] || {};
-    const saleStart = storeRaw.sale_start || null;
-    const saleEnd = storeRaw.sale_end || null;
-    const imageUrl = rawItem.image_url || null;
+      // Find sale dates from raw data (match by store display name)
+      const dates = storeDates[storeName] || {};
+      const saleEnd = dates.sale_end || null;
 
-    const hash = itemHash(item.name, item.brand || null, item.price, sourceId, saleEnd);
+      // Compute item_hash: hash(item_name + brand + sale_price + source_id + sale_end)
+      const hashInput = `${item.name}${item.brand || ''}${item.price}${source.id}${saleEnd || ''}`;
+      const itemHash = createHash('sha256').update(hashInput).digest('hex').slice(0, 32);
 
-    const result = insertItem.run({
-      item_hash: hash,
-      item_name: item.name,
-      brand: item.brand || null,
-      sale_price: item.price,
-      regular_price: item.original_price || null,
-      category: item.category,
-      sale_start: saleStart,
-      sale_end: saleEnd,
-      image_url: imageUrl,
-      source_id: sourceId,
-      source_url: storeUrl,
-    });
+      const result = db.prepare(`
+        INSERT OR IGNORE INTO flyer_items
+          (item_hash, item_name, brand, sale_price, regular_price, category,
+           sale_start, sale_end, image_url, source_id, source_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        itemHash,
+        item.name,
+        item.brand || null,
+        item.price,
+        item.original_price || null,
+        category,
+        dates.sale_start || null,
+        saleEnd,
+        item.image_url || null,
+        source.id,
+        sourceUrl
+      );
 
-    if (result.changes > 0) {
-      stored++;
-    } else {
-      duplicates++;
+      if (result.changes > 0) stored++;
+      else skipped++;
     }
   }
 })();
 
-console.log(`\n=== Phase 2.5: Store ===`);
-console.log(`${stored} items stored, ${duplicates} duplicates skipped`);
+console.log(`${stored} items stored, ${skipped} duplicates skipped`);
