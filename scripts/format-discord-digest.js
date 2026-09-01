@@ -33,20 +33,20 @@ function categorizeEvent(event) {
   const desc = (event.description || '').toLowerCase();
   const combined = title + ' ' + desc;
 
-  // Music: Concerts, live music, band performances, DJ, jazz, etc
-  const musicKeywords = ['concert', 'live', 'performance', 'band', 'music', 'jazz', 'artist', 'singer', 'musician', 'dj', 'party', 'music awards', 'candlelight jazz', 'the jazz room'];
+  // Music: Concerts, live music, band performances, jam sessions, jazz, etc
+  const musicKeywords = ['concert', 'live on stage', 'live music', 'live from', 'jam session', 'performance', 'band', 'music', 'jazz', 'artist', 'singer', 'musician', 'dj', 'party', 'carol festival', 'torch song'];
   if (musicKeywords.some(kw => combined.includes(kw))) {
     return 'music';
   }
 
   // Workshops: Classes, hands-on learning, craft sessions, workshops
-  const workshopKeywords = ['workshop', 'class', 'hands-on', 'learn', 'craft', 'finger weaving', 'jingle cone'];
+  const workshopKeywords = ['workshop', 'class', 'hands-on', 'learn', 'craft', 'punch needle', 'oil pastels', 'coffee ceremony'];
   if (workshopKeywords.some(kw => combined.includes(kw))) {
     return 'workshop';
   }
 
-  // Arts & Culture: Gallery, theater, film, exhibition, art, talks
-  const artsKeywords = ['gallery', 'theater', 'theatre', 'film', 'movie', 'exhibition', 'art', 'tale', 'classics & crafts', 'how true', 'drop-in art', 'opens', 'opening', 'studio', 'talk', 'grease', 'fun home', 'candlelight', 'public art', 'reel talk'];
+  // Arts & Culture: Gallery, theater, film, exhibition, art, talks, storytelling
+  const artsKeywords = ['gallery', 'theater', 'theatre', 'film', 'movie', 'exhibition', 'art', 'cinematheque', 'fair', 'storytelling', 'poetry', 'culture', 'heritage', 'talk', 'faust', 'holmes', 'fox on fairway', 'wonderful life', 'untitled fundraiser', 'sage theatre', 'morpheus', 'scorpio'];
   if (artsKeywords.some(kw => combined.includes(kw))) {
     return 'arts';
   }
@@ -175,54 +175,55 @@ const messages = [];
 
 // Header message
 const total = events.length;
-messages.push(`🗓️ **EventFinder Digest** — ${total} new events · August 21, 2026`);
+messages.push(`🗓️ **EventFinder Digest** — ${total} new events · September 1, 2026`);
 
-// Music events
-if (grouped.music.length > 0) {
-  let categoryMsg = `\n🎵 **Music** — ${grouped.music.length} new events\n`;
-  for (const event of grouped.music) {
-    categoryMsg += '\n' + formatEvent(event, true);
-  }
-  messages.push(categoryMsg);
-}
+// Helper function to build category messages with proper 1950 char limit
+function buildCategoryMessages(category, emoji, categoryName, events, isMusic) {
+  const categoryMessages = [];
+  let categoryHeader = `${emoji} **${categoryName}** — ${events.length} new ${events.length === 1 ? 'event' : 'events'}`;
+  let currentMsg = categoryHeader;
 
-// Arts & Culture events
-if (grouped.arts.length > 0) {
-  let categoryMsg = `\n🎨 **Arts & Culture** — ${grouped.arts.length} new events\n`;
-  let currentMsg = '';
-  for (const event of grouped.arts) {
-    const formatted = '\n' + formatEvent(event, false);
-    if ((currentMsg + formatted).length > 1950 && currentMsg.length > 0) {
-      categoryMsg += currentMsg;
-      messages.push(categoryMsg);
-      categoryMsg = `🎨 **Arts & Culture** (continued)\n`;
-      currentMsg = formatted;
+  for (const event of events) {
+    const formatted = '\n\n' + formatEvent(event, isMusic).trim();
+
+    if ((currentMsg + formatted).length > 1950 && currentMsg !== categoryHeader) {
+      // Save current message and start a new one
+      categoryMessages.push(currentMsg);
+      currentMsg = `${emoji} **${categoryName}** (continued)${formatted}`;
     } else {
       currentMsg += formatted;
     }
   }
-  categoryMsg += currentMsg;
-  if (categoryMsg.trim().length > 0) {
-    messages.push(categoryMsg);
+
+  if (currentMsg.length > 0) {
+    categoryMessages.push(currentMsg);
   }
+
+  return categoryMessages;
+}
+
+// Music events
+if (grouped.music.length > 0) {
+  const musicMsgs = buildCategoryMessages('music', '🎵', 'Music', grouped.music, true);
+  messages.push(...musicMsgs);
+}
+
+// Arts & Culture events
+if (grouped.arts.length > 0) {
+  const artsMsgs = buildCategoryMessages('arts', '🎨', 'Arts & Culture', grouped.arts, false);
+  messages.push(...artsMsgs);
 }
 
 // Workshop events
 if (grouped.workshop.length > 0) {
-  let categoryMsg = `\n🛠️ **Workshops** — ${grouped.workshop.length} new events\n`;
-  for (const event of grouped.workshop) {
-    categoryMsg += '\n' + formatEvent(event, false);
-  }
-  messages.push(categoryMsg);
+  const workshopMsgs = buildCategoryMessages('workshop', '🛠️', 'Workshops', grouped.workshop, false);
+  messages.push(...workshopMsgs);
 }
 
 // Other events
 if (grouped.other.length > 0) {
-  let categoryMsg = `\n📅 **Other** — ${grouped.other.length} new events\n`;
-  for (const event of grouped.other) {
-    categoryMsg += '\n' + formatEvent(event, false);
-  }
-  messages.push(categoryMsg);
+  const otherMsgs = buildCategoryMessages('other', '📅', 'Other', grouped.other, false);
+  messages.push(...otherMsgs);
 }
 
 // Output
@@ -232,4 +233,4 @@ const output = {
   messages: messages
 };
 
-console.log(JSON.stringify(output, null, 2));
+fs.writeFileSync('/tmp/discord-digest.json', JSON.stringify(output, null, 2));
