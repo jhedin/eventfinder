@@ -1,236 +1,191 @@
 #!/usr/bin/env node
 
-import fs from 'fs';
+// Read stdin for events
+let input = '';
+process.stdin.on('data', chunk => {
+  input += chunk;
+});
 
-// Read the events from stdin or file
-const eventsJson = fs.readFileSync(0, 'utf8');
-const events = JSON.parse(eventsJson);
+process.stdin.on('end', () => {
+  const events = JSON.parse(input);
 
-// Helper: format date/time
-function formatDateTime(date, time) {
-  if (!date) return null;
-  const d = new Date(date + 'T00:00:00Z');
-  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const dayName = dayNames[d.getUTCDay()];
-  const month = monthNames[d.getUTCMonth()];
-  const day = d.getUTCDate();
-
-  if (!time) {
-    return `${dayName} ${month} ${day}`;
-  }
-
-  const [hours, mins] = time.split(':');
-  const h = parseInt(hours);
-  const period = h >= 12 ? 'PM' : 'AM';
-  const displayHours = h % 12 || 12;
-  return `${dayName} ${month} ${day} at ${displayHours}:${mins} ${period}`;
-}
-
-// Helper: categorize event
-function categorizeEvent(event) {
-  const title = event.title.toLowerCase();
-  const desc = (event.description || '').toLowerCase();
-  const combined = title + ' ' + desc;
-
-  // Music: Concerts, live music, band performances, jam sessions, jazz, etc
-  const musicKeywords = ['concert', 'live on stage', 'live music', 'live from', 'jam session', 'performance', 'band', 'music', 'jazz', 'artist', 'singer', 'musician', 'dj', 'party', 'carol festival', 'torch song'];
-  if (musicKeywords.some(kw => combined.includes(kw))) {
-    return 'music';
-  }
-
-  // Workshops: Classes, hands-on learning, craft sessions, workshops
-  const workshopKeywords = ['workshop', 'class', 'hands-on', 'learn', 'craft', 'punch needle', 'oil pastels', 'coffee ceremony'];
-  if (workshopKeywords.some(kw => combined.includes(kw))) {
-    return 'workshop';
-  }
-
-  // Arts & Culture: Gallery, theater, film, exhibition, art, talks, storytelling
-  const artsKeywords = ['gallery', 'theater', 'theatre', 'film', 'movie', 'exhibition', 'art', 'cinematheque', 'fair', 'storytelling', 'poetry', 'culture', 'heritage', 'talk', 'faust', 'holmes', 'fox on fairway', 'wonderful life', 'untitled fundraiser', 'sage theatre', 'morpheus', 'scorpio'];
-  if (artsKeywords.some(kw => combined.includes(kw))) {
-    return 'arts';
-  }
-
-  // Default to other
-  return 'other';
-}
-
-// Helper: URL encode for Google Calendar
-function encodeCalendarParam(text) {
-  if (!text) return '';
-  return encodeURIComponent(text);
-}
-
-// Helper: format event for Discord
-function formatEvent(event, isMusic = false) {
-  const title = event.title;
-  const venue = event.venue;
-  const price = event.price;
-  const eventUrl = event.event_url;
-  const ticketUrl = event.ticket_url;
-  const instanceDate = event.instance_date;
-  const instanceTime = event.instance_time;
-  const ticketSaleDate = event.ticket_sale_date;
-  const ticketSaleTime = event.ticket_sale_time;
-
-  // Format date/time
-  const dateTime = formatDateTime(instanceDate, instanceTime);
-
-  // Build line 1: **Title**
-  let output = `**${title}**\n`;
-
-  // Build line 2: metadata
-  let metadata = [];
-  if (dateTime) metadata.push(`📅 ${dateTime}`);
-  if (venue) metadata.push(`📍 ${venue}`);
-  if (price) metadata.push(`💰 ${price}`);
-  output += metadata.join(' · ') + '\n';
-
-  // Build line 3: links
-  let links = [];
-  if (ticketUrl && ticketUrl !== eventUrl) {
-    links.push(`🎫 ${ticketUrl}`);
-  }
-  if (eventUrl) {
-    links.push(`🔗 ${eventUrl}`);
-  }
-
-  // Google Calendar link
-  const calendarUrl = buildCalendarUrl(title, instanceDate, instanceTime, venue, eventUrl);
-  if (calendarUrl) {
-    links.push(`📆 ${calendarUrl}`);
-  }
-
-  if (isMusic) {
-    links.push(`🎧 https://www.youtube.com/results?search_query=${encodeURIComponent(title)}`);
-  }
-
-  if (links.length > 0) {
-    output += links.map(l => {
-      if (l.includes(' http')) {
-        const firstSpace = l.indexOf(' ');
-        const emoji = l.substring(0, firstSpace);
-        const url = l.substring(firstSpace + 1);
-        return `${emoji} ${url}`;
-      }
-      return l;
-    }).join(' · ') + '\n';
-  }
-
-  // Add ticket sale date if present
-  if (ticketSaleDate) {
-    const saleDate = formatDateTime(ticketSaleDate, ticketSaleTime);
-    output += `🔔 Tickets on sale ${saleDate}\n`;
-  }
-
-  return output;
-}
-
-// Helper: build Google Calendar URL
-function buildCalendarUrl(title, date, time, venue, eventUrl) {
-  if (!date) return '';
-  let startDate = date.replace(/-/g, '');
-  
-  // If no time, use all-day format
-  if (!time) {
-    const endDate = startDate;
-    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeCalendarParam(title)}&dates=${startDate}/${endDate}&details=${encodeCalendarParam(eventUrl || '')}&location=${encodeCalendarParam(venue || '')}`;
-  }
-
-  // If time, add 2 hours for end time
-  const [hours, mins, secs] = time.split(':');
-  let endHours = parseInt(hours) + 2;
-  let endDate = date;
-  
-  if (endHours >= 24) {
-    endHours = endHours - 24;
+  // Helper function to format date-time for Google Calendar URL
+  function formatGoogleCalendarTime(date, time) {
+    if (!date) return '';
     const d = new Date(date + 'T00:00:00Z');
-    d.setDate(d.getDate() + 1);
-    endDate = d.toISOString().split('T')[0];
+    const year = d.getUTCFullYear();
+    const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+
+    if (!time) {
+      return `${year}${month}${day}/${year}${month}${day}`;
+    }
+
+    const [h, m] = time.split(':');
+    const startTime = `${year}${month}${day}T${h}${m}00`;
+    // Default 2-hour duration
+    const endHour = String(parseInt(h) + 2).padStart(2, '0');
+    const endTime = `${year}${month}${day}T${endHour}${m}00`;
+    return `${startTime}/${endTime}`;
   }
-  
-  const startTime = hours + mins + (secs || '00');
-  const endTime = String(endHours).padStart(2, '0') + mins + (secs || '00');
-  
-  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeCalendarParam(title)}&dates=${startDate}T${startTime}00/${endDate}T${endTime}00&details=${encodeCalendarParam(eventUrl || '')}&location=${encodeCalendarParam(venue || '')}`;
-}
 
-// Group events by category
-const grouped = {
-  music: [],
-  arts: [],
-  workshop: [],
-  other: []
-};
+  // Helper to format 12-hour time
+  function format12Hour(time) {
+    if (!time) return '';
+    const [h, m] = time.split(':');
+    const hour = parseInt(h);
+    const ampm = hour >= 12 ? 'PM' : 'AM';
+    const displayHour = hour % 12 || 12;
+    return `${displayHour}:${m} ${ampm}`;
+  }
 
-const instanceIds = new Set();
-for (const event of events) {
-  const category = categorizeEvent(event);
-  grouped[category].push(event);
-  instanceIds.add(event.instance_id);
-}
+  // Helper to format date
+  function formatDate(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00Z');
+    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const dayName = days[d.getUTCDay()];
+    return `${dayName} ${String(d.getUTCDate()).padStart(2, '0')}`;
+  }
 
-// Build messages
-const messages = [];
+  // Helper to determine category
+  function categorizeEvent(event) {
+    const title = (event.title || '').toLowerCase();
+    const venue = (event.venue || '').toLowerCase();
+    const desc = (event.description || '').toLowerCase();
 
-// Header message
-const total = events.length;
-messages.push(`🗓️ **EventFinder Digest** — ${total} new events · September 1, 2026`);
+    const musicKeywords = ['music', 'concert', 'band', 'live', 'festival', 'jazz', 'rock', 'blues', 'soundtrack', 'beethoven', 'singer'];
+    const workshopKeywords = ['workshop', 'class', 'training', 'professional development', 'course'];
+    const artKeywords = ['theater', 'theatre', 'art', 'exhibition', 'gallery', 'film', 'poetry', 'story', 'talk', 'speaker', 'photography', 'musical'];
 
-// Helper function to build category messages with proper 1950 char limit
-function buildCategoryMessages(category, emoji, categoryName, events, isMusic) {
-  const categoryMessages = [];
-  let categoryHeader = `${emoji} **${categoryName}** — ${events.length} new ${events.length === 1 ? 'event' : 'events'}`;
-  let currentMsg = categoryHeader;
+    const fullText = title + ' ' + venue + ' ' + desc;
+
+    for (const keyword of workshopKeywords) {
+      if (fullText.includes(keyword)) return 'workshop';
+    }
+
+    for (const keyword of musicKeywords) {
+      if (fullText.includes(keyword)) return 'music';
+    }
+
+    for (const keyword of artKeywords) {
+      if (fullText.includes(keyword)) return 'arts';
+    }
+
+    return 'other';
+  }
+
+  // Group events by category
+  const grouped = { music: [], arts: [], workshop: [], other: [] };
+  const uniqueInstanceIds = new Set();
 
   for (const event of events) {
-    const formatted = '\n\n' + formatEvent(event, isMusic).trim();
+    const category = categorizeEvent(event);
+    grouped[category].push(event);
+    uniqueInstanceIds.add(event.instance_id);
+  }
 
-    if ((currentMsg + formatted).length > 1950 && currentMsg !== categoryHeader) {
-      // Save current message and start a new one
-      categoryMessages.push(currentMsg);
-      currentMsg = `${emoji} **${categoryName}** (continued)${formatted}`;
-    } else {
-      currentMsg += formatted;
+  // Format event into Discord message lines
+  function formatEvent(event) {
+    const timeStr = event.instance_time ? ` at ${format12Hour(event.instance_time)}` : '';
+    const dateStr = formatDate(event.instance_date);
+
+    let line = `**${event.title}**\n`;
+
+    // First line: date, time, venue, price
+    let metaLine = `📅 ${dateStr}${timeStr}`;
+    if (event.venue) metaLine += ` · 📍 ${event.venue}`;
+    if (event.price) metaLine += ` · 💰 ${event.price}`;
+    line += metaLine + '\n';
+
+    // Links and actions
+    let linksLine = '';
+
+    // Add ticket URL if different from event_url
+    if (event.ticket_url && event.ticket_url !== event.event_url && event.ticket_url.startsWith('http')) {
+      linksLine += `🎫 <${event.ticket_url}> · `;
+    }
+
+    // Add event URL
+    if (event.event_url && event.event_url.startsWith('http')) {
+      linksLine += `🔗 <${event.event_url}> · `;
+    }
+
+    // Add Google Calendar link
+    const dates = formatGoogleCalendarTime(event.instance_date, event.instance_time);
+    if (dates) {
+      const encoded = encodeURIComponent(event.title);
+      const calUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encoded}&dates=${dates}&details=${encodeURIComponent(event.event_url || '')}&location=${encodeURIComponent(event.venue || '')}`;
+      linksLine += `📆 <${calUrl}|Add to calendar> · `;
+    }
+
+    // Add YouTube search for music events
+    if (categorizeEvent(event) === 'music') {
+      const artist = event.title.split(' - ')[0].trim();
+      const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(artist)}`;
+      linksLine += `🎧 <${ytUrl}|Listen>`;
+    }
+
+    // Add ticket sale date if present
+    if (event.ticket_sale_date) {
+      linksLine += ` · 🔔 Tickets on sale ${formatDate(event.ticket_sale_date)}`;
+    }
+
+    // Clean up trailing separators
+    linksLine = linksLine.replace(/ · $/, '');
+
+    if (linksLine) {
+      line += linksLine + '\n';
+    }
+
+    return line;
+  }
+
+  // Build messages by category
+  const messages = [];
+
+  // Header
+  const totalEvents = events.length;
+  messages.push(`🗓️ **EventFinder Digest** — ${totalEvents} new events · September 3, 2026`);
+
+  // Category icons and names
+  const categoryNames = {
+    music: '🎵 Music',
+    arts: '🎨 Arts & Culture',
+    workshop: '🛠️ Workshops',
+    other: '📅 Other'
+  };
+
+  const categoryOrder = ['music', 'arts', 'workshop', 'other'];
+
+  for (const cat of categoryOrder) {
+    if (grouped[cat].length === 0) continue;
+
+    const eventsInCat = grouped[cat];
+    let categoryMsg = `\n${categoryNames[cat]} — ${eventsInCat.length} new event${eventsInCat.length !== 1 ? 's' : ''}\n\n`;
+
+    for (const event of eventsInCat) {
+      const eventFormatted = formatEvent(event);
+
+      // Check if adding this event would exceed Discord limit
+      if ((categoryMsg + eventFormatted).length > 1950) {
+        messages.push(categoryMsg.trim());
+        categoryMsg = `${categoryNames[cat]} (continued)\n\n${eventFormatted}`;
+      } else {
+        categoryMsg += eventFormatted + '\n';
+      }
+    }
+
+    if (categoryMsg.trim()) {
+      messages.push(categoryMsg.trim());
     }
   }
 
-  if (currentMsg.length > 0) {
-    categoryMessages.push(currentMsg);
-  }
+  // Build output
+  const output = {
+    total_events: totalEvents,
+    instance_ids: Array.from(uniqueInstanceIds),
+    messages: messages
+  };
 
-  return categoryMessages;
-}
-
-// Music events
-if (grouped.music.length > 0) {
-  const musicMsgs = buildCategoryMessages('music', '🎵', 'Music', grouped.music, true);
-  messages.push(...musicMsgs);
-}
-
-// Arts & Culture events
-if (grouped.arts.length > 0) {
-  const artsMsgs = buildCategoryMessages('arts', '🎨', 'Arts & Culture', grouped.arts, false);
-  messages.push(...artsMsgs);
-}
-
-// Workshop events
-if (grouped.workshop.length > 0) {
-  const workshopMsgs = buildCategoryMessages('workshop', '🛠️', 'Workshops', grouped.workshop, false);
-  messages.push(...workshopMsgs);
-}
-
-// Other events
-if (grouped.other.length > 0) {
-  const otherMsgs = buildCategoryMessages('other', '📅', 'Other', grouped.other, false);
-  messages.push(...otherMsgs);
-}
-
-// Output
-const output = {
-  total_events: total,
-  instance_ids: Array.from(instanceIds).sort((a, b) => a - b),
-  messages: messages
-};
-
-fs.writeFileSync('/tmp/discord-digest.json', JSON.stringify(output, null, 2));
+  console.log(JSON.stringify(output, null, 2));
+});
