@@ -1,191 +1,247 @@
 #!/usr/bin/env node
+import fs from 'fs';
 
-// Read stdin for events
-let input = '';
-process.stdin.on('data', chunk => {
-  input += chunk;
-});
+// Helper to create Google Calendar URL
+function createCalendarUrl(event) {
+  const {
+    title,
+    venue,
+    instance_date,
+    instance_time,
+    end_date,
+    event_url
+  } = event;
 
-process.stdin.on('end', () => {
-  const events = JSON.parse(input);
+  if (!title || !instance_date) return null;
 
-  // Helper function to format date-time for Google Calendar URL
-  function formatGoogleCalendarTime(date, time) {
-    if (!date) return '';
-    const d = new Date(date + 'T00:00:00Z');
-    const year = d.getUTCFullYear();
-    const month = String(d.getUTCMonth() + 1).padStart(2, '0');
-    const day = String(d.getUTCDate()).padStart(2, '0');
-
-    if (!time) {
-      return `${year}${month}${day}/${year}${month}${day}`;
-    }
-
-    const [h, m] = time.split(':');
-    const startTime = `${year}${month}${day}T${h}${m}00`;
-    // Default 2-hour duration
-    const endHour = String(parseInt(h) + 2).padStart(2, '0');
-    const endTime = `${year}${month}${day}T${endHour}${m}00`;
-    return `${startTime}/${endTime}`;
+  let startDate, endDate;
+  
+  if (instance_time) {
+    const timeMatch = instance_time.match(/(\d{2}):(\d{2})/);
+    const hour = timeMatch ? timeMatch[1] : '00';
+    const minute = timeMatch ? timeMatch[2] : '00';
+    startDate = instance_date.replace(/-/g, '') + 'T' + hour + minute + '00';
+    
+    const endHour = String(Math.min(parseInt(hour) + 2, 23)).padStart(2, '0');
+    endDate = instance_date.replace(/-/g, '') + 'T' + endHour + minute + '00';
+  } else {
+    startDate = instance_date.replace(/-/g, '');
+    endDate = end_date ? end_date.replace(/-/g, '') : startDate;
   }
 
-  // Helper to format 12-hour time
-  function format12Hour(time) {
-    if (!time) return '';
-    const [h, m] = time.split(':');
-    const hour = parseInt(h);
-    const ampm = hour >= 12 ? 'PM' : 'AM';
-    const displayHour = hour % 12 || 12;
-    return `${displayHour}:${m} ${ampm}`;
+  const params = new URLSearchParams();
+  params.set('action', 'TEMPLATE');
+  params.set('text', title);
+  params.set('dates', `${startDate}/${endDate}`);
+  params.set('details', event_url || '');
+  params.set('location', venue || '');
+
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
+}
+
+// Categorize event based on title/description
+function categorizeEvent(event) {
+  const { title, description } = event;
+  const text = (title + ' ' + (description || '')).toLowerCase();
+
+  // Music events - includes "live music", "concert", "band", specific genres
+  if (text.match(/concert|band|live music|musician|artist|jam|blues|jazz|rock|pop|indie|folk|reggae|electronic|dj|performance|singer|performer|music venue/)) {
+    return 'music';
   }
 
-  // Helper to format date
-  function formatDate(dateStr) {
-    const d = new Date(dateStr + 'T00:00:00Z');
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const dayName = days[d.getUTCDay()];
-    return `${dayName} ${String(d.getUTCDate()).padStart(2, '0')}`;
+  // Arts & Culture - broader than workshops
+  if (text.match(/art|gallery|theater|theatre|film|cinema|movie|play|exhibition|cultural|indigenous|aboriginal|native|poetry|spoken word|talk|lecture|symposium|conference|opening|festival|awards|book|author|dance|ballet|comedy|show/)) {
+    return 'arts';
   }
 
-  // Helper to determine category
-  function categorizeEvent(event) {
-    const title = (event.title || '').toLowerCase();
-    const venue = (event.venue || '').toLowerCase();
-    const desc = (event.description || '').toLowerCase();
-
-    const musicKeywords = ['music', 'concert', 'band', 'live', 'festival', 'jazz', 'rock', 'blues', 'soundtrack', 'beethoven', 'singer'];
-    const workshopKeywords = ['workshop', 'class', 'training', 'professional development', 'course'];
-    const artKeywords = ['theater', 'theatre', 'art', 'exhibition', 'gallery', 'film', 'poetry', 'story', 'talk', 'speaker', 'photography', 'musical'];
-
-    const fullText = title + ' ' + venue + ' ' + desc;
-
-    for (const keyword of workshopKeywords) {
-      if (fullText.includes(keyword)) return 'workshop';
-    }
-
-    for (const keyword of musicKeywords) {
-      if (fullText.includes(keyword)) return 'music';
-    }
-
-    for (const keyword of artKeywords) {
-      if (fullText.includes(keyword)) return 'arts';
-    }
-
-    return 'other';
+  // Workshops
+  if (text.match(/workshop|class|training|course|hands-on|craft|learn/)) {
+    return 'workshop';
   }
 
-  // Group events by category
-  const grouped = { music: [], arts: [], workshop: [], other: [] };
-  const uniqueInstanceIds = new Set();
+  return 'other';
+}
+
+// Format single event for Discord
+function formatEventForDiscord(event) {
+  const {
+    title,
+    venue,
+    price,
+    event_url,
+    ticket_url,
+    instance_date,
+    instance_time,
+    ticket_sale_date
+  } = event;
+
+  // Parse date
+  const dateObj = new Date(instance_date + 'T00:00:00');
+  const dayName = dateObj.toLocaleString('en-US', { weekday: 'short' });
+  const dayNum = dateObj.getDate();
+  const monthName = dateObj.toLocaleString('en-US', { month: 'short' });
+
+  let timestamp = `📅 ${dayName} ${monthName} ${dayNum}`;
+  
+  if (instance_time) {
+    const timeMatch = instance_time.match(/(\d{2}):(\d{2})/);
+    if (timeMatch) {
+      const hour = parseInt(timeMatch[1]);
+      const minute = timeMatch[2];
+      const ampm = hour >= 12 ? 'PM' : 'AM';
+      const displayHour = hour > 12 ? hour - 12 : (hour === 0 ? 12 : hour);
+      timestamp += ` at ${displayHour}:${minute} ${ampm}`;
+    }
+  }
+
+  // Build details line
+  const details = [];
+  details.push(timestamp);
+  if (venue) details.push(`📍 ${venue}`);
+  if (price) details.push(`💰 ${price}`);
+
+  let eventLine = `**${title}**\n${details.join(' · ')}`;
+
+  // Add links
+  const links = [];
+  
+  if (ticket_url && ticket_url !== event_url) {
+    links.push(`🎫 [Tickets](${ticket_url})`);
+  }
+  
+  if (event_url && !event_url.startsWith('/')) {
+    links.push(`🔗 [Event](${event_url})`);
+  }
+
+  // Add calendar link
+  const calUrl = createCalendarUrl(event);
+  if (calUrl) {
+    links.push(`📆 [Add to Calendar](${calUrl})`);
+  }
+
+  // Add YouTube search for music events
+  const category = categorizeEvent(event);
+  if (category === 'music') {
+    const artistMatch = title.match(/^(.+?)\s+(?:with|and|&|featuring|\+)/i);
+    if (artistMatch) {
+      const artist = artistMatch[1].trim();
+      const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(artist)}`;
+      links.push(`🎧 [Listen](${ytUrl})`);
+    }
+  }
+
+  if (links.length > 0) {
+    eventLine += '\n' + links.join(' · ');
+  }
+
+  // Add ticket sale date if present
+  if (ticket_sale_date) {
+    const saleDate = new Date(ticket_sale_date + 'T00:00:00');
+    const saleDateStr = saleDate.toLocaleString('en-US', { month: 'short', day: 'numeric' });
+    eventLine += `\n🔔 Tickets on sale ${saleDateStr}`;
+  }
+
+  return eventLine;
+}
+
+// Split messages to fit Discord limit (1950 chars)
+function splitMessages(messages) {
+  const result = [];
+  let current = '';
+
+  for (const msg of messages) {
+    if (!current) {
+      current = msg;
+    } else if ((current + '\n\n' + msg).length <= 1950) {
+      current += '\n\n' + msg;
+    } else {
+      result.push(current);
+      current = msg;
+    }
+  }
+
+  if (current) {
+    result.push(current);
+  }
+
+  return result;
+}
+
+// Main formatting logic
+function formatDigest(events) {
+  // Group by category
+  const byCategory = {
+    music: [],
+    arts: [],
+    workshop: [],
+    other: []
+  };
 
   for (const event of events) {
     const category = categorizeEvent(event);
-    grouped[category].push(event);
-    uniqueInstanceIds.add(event.instance_id);
+    byCategory[category].push(event);
   }
 
-  // Format event into Discord message lines
-  function formatEvent(event) {
-    const timeStr = event.instance_time ? ` at ${format12Hour(event.instance_time)}` : '';
-    const dateStr = formatDate(event.instance_date);
+  // Collect all instance IDs
+  const allInstanceIds = events.map(e => e.instance_id);
 
-    let line = `**${event.title}**\n`;
-
-    // First line: date, time, venue, price
-    let metaLine = `📅 ${dateStr}${timeStr}`;
-    if (event.venue) metaLine += ` · 📍 ${event.venue}`;
-    if (event.price) metaLine += ` · 💰 ${event.price}`;
-    line += metaLine + '\n';
-
-    // Links and actions
-    let linksLine = '';
-
-    // Add ticket URL if different from event_url
-    if (event.ticket_url && event.ticket_url !== event.event_url && event.ticket_url.startsWith('http')) {
-      linksLine += `🎫 <${event.ticket_url}> · `;
-    }
-
-    // Add event URL
-    if (event.event_url && event.event_url.startsWith('http')) {
-      linksLine += `🔗 <${event.event_url}> · `;
-    }
-
-    // Add Google Calendar link
-    const dates = formatGoogleCalendarTime(event.instance_date, event.instance_time);
-    if (dates) {
-      const encoded = encodeURIComponent(event.title);
-      const calUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encoded}&dates=${dates}&details=${encodeURIComponent(event.event_url || '')}&location=${encodeURIComponent(event.venue || '')}`;
-      linksLine += `📆 <${calUrl}|Add to calendar> · `;
-    }
-
-    // Add YouTube search for music events
-    if (categorizeEvent(event) === 'music') {
-      const artist = event.title.split(' - ')[0].trim();
-      const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(artist)}`;
-      linksLine += `🎧 <${ytUrl}|Listen>`;
-    }
-
-    // Add ticket sale date if present
-    if (event.ticket_sale_date) {
-      linksLine += ` · 🔔 Tickets on sale ${formatDate(event.ticket_sale_date)}`;
-    }
-
-    // Clean up trailing separators
-    linksLine = linksLine.replace(/ · $/, '');
-
-    if (linksLine) {
-      line += linksLine + '\n';
-    }
-
-    return line;
-  }
-
-  // Build messages by category
-  const messages = [];
-
-  // Header
+  // Header message
+  const today = new Date(2026, 8, 19); // Sep 19, 2026
+  const dateStr = today.toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   const totalEvents = events.length;
-  messages.push(`🗓️ **EventFinder Digest** — ${totalEvents} new events · September 3, 2026`);
+  const headerMsg = `🗓️ **EventFinder Digest** — ${totalEvents} new events · ${dateStr}`;
 
-  // Category icons and names
-  const categoryNames = {
-    music: '🎵 Music',
-    arts: '🎨 Arts & Culture',
-    workshop: '🛠️ Workshops',
-    other: '📅 Other'
+  // Format by category
+  const categoryEmoji = {
+    music: '🎵',
+    arts: '🎨',
+    workshop: '🛠️',
+    other: '📅'
   };
 
-  const categoryOrder = ['music', 'arts', 'workshop', 'other'];
+  const categoryName = {
+    music: 'Music',
+    arts: 'Arts & Culture',
+    workshop: 'Workshops',
+    other: 'Other'
+  };
 
-  for (const cat of categoryOrder) {
-    if (grouped[cat].length === 0) continue;
+  const messageGroups = [];
 
-    const eventsInCat = grouped[cat];
-    let categoryMsg = `\n${categoryNames[cat]} — ${eventsInCat.length} new event${eventsInCat.length !== 1 ? 's' : ''}\n\n`;
+  for (const [category, catEvents] of Object.entries(byCategory)) {
+    if (catEvents.length === 0) continue;
 
-    for (const event of eventsInCat) {
-      const eventFormatted = formatEvent(event);
+    const catHeader = `${categoryEmoji[category]} **${categoryName[category]}** — ${catEvents.length} new event${catEvents.length > 1 ? 's' : ''}`;
+    messageGroups.push(catHeader);
 
-      // Check if adding this event would exceed Discord limit
-      if ((categoryMsg + eventFormatted).length > 1950) {
-        messages.push(categoryMsg.trim());
-        categoryMsg = `${categoryNames[cat]} (continued)\n\n${eventFormatted}`;
-      } else {
-        categoryMsg += eventFormatted + '\n';
-      }
-    }
-
-    if (categoryMsg.trim()) {
-      messages.push(categoryMsg.trim());
+    for (const event of catEvents) {
+      const formatted = formatEventForDiscord(event);
+      messageGroups.push(formatted);
     }
   }
 
-  // Build output
-  const output = {
-    total_events: totalEvents,
-    instance_ids: Array.from(uniqueInstanceIds),
-    messages: messages
-  };
+  // Split into Discord-size messages
+  const bodyMessages = splitMessages(messageGroups);
 
-  console.log(JSON.stringify(output, null, 2));
+  return {
+    total_events: totalEvents,
+    instance_ids: allInstanceIds,
+    messages: [headerMsg, ...bodyMessages]
+  };
+}
+
+// Process events from stdin
+const inputData = await new Promise((resolve, reject) => {
+  let data = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', chunk => { data += chunk; });
+  process.stdin.on('end', () => resolve(data));
+  process.stdin.on('error', reject);
 });
+
+const events = JSON.parse(inputData);
+const digest = formatDigest(events);
+
+// Write output
+fs.writeFileSync('/tmp/discord-digest.json', JSON.stringify(digest, null, 2));
+console.log(`Digest formatted: ${digest.total_events} events, ${digest.messages.length} messages. Written to /tmp/discord-digest.json`);
