@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Classify and curate raw Flipp flyer data based on user preferences.
+
 import { readFileSync, writeFileSync } from 'fs';
 
 const RAW_PATH = '/tmp/eventfinder-flyer-batch-flipp.json';
@@ -7,339 +7,333 @@ const OUT_PATH = '/tmp/eventfinder-flyer-curated.json';
 
 const raw = JSON.parse(readFileSync(RAW_PATH, 'utf8'));
 
-// Skip liquor/beer stores and non-food stores entirely
+// ── Skip entirely ──────────────────────────────────────────────────────────
 const SKIP_STORES = new Set([
-  'Co-op Wine Spirits Beer',
-  'Sobeys & Safeway Liquor',
-  'Canadian Tire',
-  'London Drugs',
+  'Sobeys',                    // duplicate of Safeway
+  'Co-op Wine Spirits Beer',   // alcohol
+  'Sobeys & Safeway Liquor',   // alcohol
+  'Shoppers Drug Mart',        // pharmacy/non-food
+  'London Drugs',              // electronics/non-food
+  'Canadian Tire',             // hardware/non-food
 ]);
 
-// Sobeys === Safeway (same flyer), drop Sobeys
-const DEDUPE_STORE = { 'Sobeys': 'Safeway' };
-
-// Keywords that mark an item as non-food / skip
-const SKIP_KEYWORDS = [
-  // pharmacy / beauty / personal care
-  /tampon|pad\b|liner|kotex|always\s+infinity|pantiliner|condom|contracepti/i,
-  /shampoo|conditioner|body\s+wash|soap\s+bar|deodorant|antiperspirant/i,
-  /lotion|moisturizer|sunscreen|sunblock|face\s+wash|skin\s+care|serum|toner/i,
-  /toothpaste|toothbrush|floss|mouthwash|oral\s+b|colgate|crest|listerine/i,
-  /razor|shaving|gillette|schick|venus\b/i,
-  /vitamin|supplement|melatonin|probiotic|omega|collagen|biotin|zinc|magnesium/i,
-  /advil|tylenol|ibuprofen|acetaminophen|aspirin|naproxen|antacid|tums|rolaids/i,
-  /allergy|antihistamine|reactine|claritin|benadryl/i,
-  /bandage|band.?aid|tensor|first\s+aid/i,
-  /hair\s+dye|hair\s+color|clairol|garnier\s+hair|nice\s+n\s+easy/i,
-  /mascara|lipstick|foundation|blush|eyeshadow|concealer|makeup|cosmetic/i,
-  /perfume|cologne|fragrance/i,
-  /paper\s+towel|toilet\s+paper|tissue|facial\s+tissue|kleenex|scott\s+tow/i,
-  /laundry|detergent|tide\b|downy|bounce\b|dryer\s+sheet|fabric\s+softener/i,
-  /dish\s+soap|dawn\b|cascade\b|dishwash/i,
-  /cleaning|cleaner|lysol|windex|mr\.?\s*clean|febreze|swiffer/i,
-  /garbage\s+bag|trash\s+bag|zip\s*loc|storage\s+bag|sandwich\s+bag/i,
-  /aluminum\s+foil|plastic\s+wrap|parchment\s+paper/i,
-  // baby
-  /diaper|pamper|huggies|baby\s+wipe|infant|formula\b|baby\s+food|gerber/i,
-  // pet
-  /dog\s+food|cat\s+food|pet\s+food|kibble|pedigree|purina|whiskas|friskies/i,
-  /dog\s+treat|cat\s+treat|pet\s+treat/i,
-  // alcohol
-  /beer\b|lager|ale\b|stout|ipa\b|cider\b|wine\b|vodka|whisky|whiskey|rum\b|gin\b|tequila|bourbon|scotch\b|brandy|liqueur|champagne|prosecco|sake/i,
-  // non-food general
-  /battery|batteries|lightbulb|light\s+bulb|extension\s+cord|power\s+bar/i,
-  /garden|fertilizer|potting\s+soil|lawn/i,
-  /motor\s+oil|windshield/i,
-  /gift\s+card|lottery/i,
+// ── Non-food term blocklist ────────────────────────────────────────────────
+const NON_FOOD_TERMS = [
+  /light bulb/i, /candle/i, /storage product/i, /halloween/i, /decoration/i,
+  /bluetooth/i, /speaker/i, /headphone/i, /laptop/i, /tablet/i, /phone/i,
+  /camera/i, /printer/i, /keyboard/i, /mouse\b/i, /monitor\b/i,
+  /vitamin/i, /supplement/i, /protein powder/i,
+  /blood pressure/i, /thermometer/i, /medical/i, /pharmacy/i,
+  /shampoo/i, /conditioner/i, /deodorant/i, /toothpaste/i, /toothbrush/i,
+  /lotion/i, /moisturizer/i, /sunscreen/i, /makeup/i, /mascara/i, /lipstick/i,
+  /skincare/i, /skin care/i, /cleanser/i, /serum/i, /facial/i,
+  /laundry/i, /detergent/i, /dish soap/i, /dishwasher/i, /cleaner\b/i, /wipes/i,
+  /paper towel/i, /toilet paper/i, /kleenex/i, /tissue/i,
+  /diaper/i, /baby formula/i, /infant formula/i, /toddler formula/i,
+  /pet food/i, /dog food/i, /cat food/i, /kibble/i, /pet treat/i,
+  /legging/i, /clothing/i, /apparel/i, /luggage/i, /bag\b/i,
+  /tool\b/i, /drill/i, /saw\b/i, /wrench/i, /fastener/i,
+  /motor oil/i, /antifreeze/i, /car wash/i, /automotive/i,
+  /notepad/i, /stationery/i, /pen\b/i, /pencil/i,
+  /candle/i, /air freshener/i, /garbage bag/i,
+  /barcode/i, /coupon/i, /scan/i,
+  /bar soap/i, /hand soap/i, /body wash/i, /bath bomb/i,
+  /razor\b/i, /shave/i, /nail\b/i,
+  /vitamin c/i, /omega/i, /probiotic/i, /melatonin/i,
+  /allergy/i, /cold\s+&\s+flu/i, /antacid/i, /laxative/i,
 ];
 
-// Category classification rules (order matters - first match wins)
+// ── Dietary filter: skip alcohol ──────────────────────────────────────────
+const ALCOHOL_TERMS = [
+  /\bwine\b/i, /\bbeer\b/i, /\bale\b/i, /\blager\b/i, /\bwhisky\b/i,
+  /\bwhiskey\b/i, /\bvodka\b/i, /\brum\b/i, /\bgin\b/i, /\btequila\b/i,
+  /\bbourbon\b/i, /\bspirit\b/i, /\bliquor\b/i, /\bchampagne\b/i,
+  /\bprosecco\b/i, /\bcider\b/i, /\bmead\b/i, /\bbrewery\b/i,
+];
+
+// ── Category patterns (checked in order) ──────────────────────────────────
 const CATEGORIES = [
   {
-    name: 'Meat & Seafood',
-    patterns: [
-      /chicken|turkey|duck|cornish/i,
-      /beef|steak|brisket|ground\s+beef|sirloin|ribeye|tenderloin|chuck|short\s+rib/i,
-      /pork|ham\b|bacon|sausage|chorizo|salami|pepperoni|prosciutto/i,
-      /lamb|veal|bison|venison/i,
-      /salmon|tuna|cod|tilapia|halibut|shrimp|prawn|crab|lobster|scallop|mussel|clam|oyster/i,
-      /seafood|fish\s+fillet|fish\s+stick/i,
+    key: 'Meat & Seafood',
+    terms: [
+      /chicken/i, /beef/i, /pork/i, /salmon/i, /fish/i, /shrimp/i, /prawn/i,
+      /turkey/i, /lamb/i, /steak/i, /rib\b/i, /ribs\b/i, /sausage/i, /bacon/i,
+      /ham\b/i, /cod\b/i, /tilapia/i, /tuna/i, /crab/i, /lobster/i, /scallop/i,
+      /seafood/i, /brisket/i, /ground beef/i, /ground turkey/i, /ground pork/i,
+      /meatball/i, /pepperoni/i, /salami/i, /prosciutto/i,
+      /weakfish/i, /eel\b/i, /anchovy/i, /croaker/i, /squid/i, /pompano/i,
+      /steelhead/i, /trout/i,
     ],
   },
   {
-    name: 'Produce',
-    patterns: [
-      /tomato|pepper|lettuce|spinach|kale|arugula|cabbage|broccoli|cauliflower|brussels/i,
-      /carrot|celery|cucumber|zucchini|eggplant|onion|garlic|ginger|leek|asparagus/i,
-      /potato|sweet\s+potato|yam|squash|beet|turnip|parsnip/i,
-      /apple|banana|orange|lemon|lime|grapefruit|mango|pineapple|peach|plum|pear/i,
-      /grape|strawberry|blueberry|raspberry|blackberry|cherry|melon|watermelon/i,
-      /avocado|kiwi|pomegranate|fig|date\b|lychee/i,
-      /mushroom|corn\b|pea\b|bean\b|green\s+bean|snap\s+pea/i,
-      /herb|cilantro|parsley|basil|mint|dill|thyme|rosemary/i,
-      /fresh\s+salad|mixed\s+green|baby\s+spinach|romaine/i,
-      /scotch\s+bonnet/i,
+    key: 'Produce',
+    terms: [
+      /apple/i, /banana/i, /orange/i, /grape/i, /strawberr/i, /blueberr/i,
+      /raspberr/i, /blackberr/i, /mango/i, /pineapple/i, /peach/i, /pear/i,
+      /plum/i, /cherry/i, /watermelon/i, /melon/i, /avocado/i, /lemon/i, /lime/i,
+      /tomato/i, /potato/i, /onion/i, /garlic/i, /ginger/i, /carrot/i,
+      /broccoli/i, /cauliflower/i, /spinach/i, /lettuce/i, /kale/i, /cabbage/i,
+      /pepper\b/i, /peppers\b/i, /zucchini/i, /eggplant/i, /squash/i, /corn\b/i,
+      /cucumber/i, /celery/i, /mushroom/i, /asparagus/i, /bean\b/i, /pea\b/i,
+      /sweet potato/i, /yam/i, /leek/i, /shallot/i, /beet\b/i,
+      /herb\b/i, /basil/i, /cilantro/i, /parsley/i, /dill/i,
+      /fruit\b/i, /vegetable/i, /produce/i, /fresh/i,
+    ],
+    exclude: [/fruit snack/i, /fruit punch/i, /fruit juice/i],
+  },
+  {
+    key: 'Dairy',
+    terms: [
+      /\bmilk\b/i, /\begg\b/i, /\beggs\b/i, /\bbutter\b/i, /cheese/i, /yogurt/i,
+      /yoghurt/i, /sour cream/i, /cream cheese/i, /cottage cheese/i,
+      /\bcream\b/i, /whipping cream/i, /heavy cream/i,
+      /brie/i, /cheddar/i, /gouda/i, /mozzarella/i, /parmesan/i, /parmigiano/i,
+      /feta/i, /havarti/i, /bocconcini/i, /ricotta/i, /gorgonzola/i,
+      /siggi/i, /skyr/i, /kefir/i, /ghee/i,
+    ],
+    exclude: [
+      /milk chocolate/i, /coconut milk/i, /almond milk/i, /oat milk/i,
+      /evaporated milk/i, /condensed milk/i, /chocolate milk/i, /breast milk/i,
+      /milk.based/i, /milk powder/i, /goat.s milk bar soap/i,
+      /ice milk/i, /peanut butter/i, /formula/i, /toddler/i,
+      /egg roll/i, /egg noodle/i, /spring roll/i,
     ],
   },
   {
-    name: 'Dairy',
-    patterns: [
-      /milk\b|whole\s+milk|skim\s+milk|2%\s+milk|almond\s+milk|oat\s+milk|soy\s+milk/i,
-      /butter\b|margarine/i,
-      /egg\b|eggs\b/i,
-      /cheese|cheddar|mozzarella|parmesan|brie|gouda|feta|gorgonzola|havarti|swiss\s+cheese|cream\s+cheese|ricotta|cottage\s+cheese/i,
-      /yogurt|siggi|greek\s+yogurt/i,
-      /cream\b|whipping\s+cream|sour\s+cream|half\s+and\s+half|clotted/i,
+    key: 'Bakery',
+    terms: [
+      /bread/i, /loaf/i, /bun\b/i, /buns\b/i, /bagel/i, /muffin/i, /croissant/i,
+      /pastry/i, /tortilla/i, /pita/i, /naan/i, /baguette/i, /sourdough/i,
+      /rye\b/i, /multigrain/i, /flatbread/i, /wrap\b/i,
+      /cake\b/i, /donut/i, /doughnut/i, /cookie\b/i, /crackers/i, /wafer/i,
     ],
   },
   {
-    name: 'Bakery',
-    patterns: [
-      /bread\b|baguette|sourdough|multigrain|whole\s+wheat\s+bread|rye\s+bread/i,
-      /bagel|muffin|croissant|scone|danish/i,
-      /cake\b|cupcake|donut|doughnut|pastry|tart\b/i,
-      /cookie|biscuit\b|cracker\b|wafer/i,
-      /flour\b|no\s+name\s+flour/i,
-      /tortilla|pita|naan|flatbread|wrap\b/i,
-      /cereal|granola|oat\b|oatmeal|porridge/i,
+    key: 'Frozen',
+    terms: [
+      /frozen/i, /ice cream/i, /gelato/i, /sorbet/i, /popsicle/i,
+      /pizza\b/i, /lasagna/i, /entrée/i, /entree/i, /meal/i,
+      /waffle/i, /nugget/i, /finger/i, /wing/i,
+    ],
+    exclude: [/fish sauce/i],
+  },
+  {
+    key: 'Pantry',
+    terms: [
+      /pasta\b/i, /noodle/i, /rice\b/i, /flour\b/i, /oil\b/i, /vinegar/i,
+      /sauce\b/i, /salsa/i, /classico/i, /ketchup/i, /mustard/i, /mayo/i,
+      /mayonnaise/i, /soy sauce/i, /hot sauce/i, /worcestershire/i,
+      /canned/i, /tomato/i, /bean\b/i, /lentil/i, /chickpea/i,
+      /soup\b/i, /broth/i, /stock\b/i, /bouillon/i,
+      /cereal/i, /oatmeal/i, /granola/i, /oat\b/i,
+      /peanut butter/i, /jam\b/i, /jelly\b/i, /honey/i, /syrup/i, /maple/i,
+      /chocolate\b/i, /cocoa/i, /nutella/i, /chips\b/i, /popcorn/i,
+      /cracker/i, /pretzel/i, /nuts\b/i, /almond\b/i, /cashew/i, /walnut/i,
+      /spice\b/i, /seasoning/i, /herb\b/i, /salt\b/i, /pepper\b/i,
+      /sugar\b/i, /sweetener/i, /baking/i, /yeast/i,
+      /fish sauce/i, /oyster sauce/i, /hoisin/i, /teriyaki/i,
+      /coconut milk/i, /evaporated milk/i, /condensed milk/i,
     ],
   },
   {
-    name: 'Frozen',
-    patterns: [
-      /frozen/i,
-      /ice\s+cream|gelato|sorbet|sherbet/i,
-      /pizza\b|lasagna\b/i,
+    key: 'Beverages',
+    terms: [
+      /juice\b/i, /coffee\b/i, /tea\b/i, /water\b/i, /pop\b/i, /soda\b/i,
+      /lemonade/i, /drink\b/i, /beverage/i, /sparkling/i, /smoothie/i,
+      /milkshake/i, /kombucha/i, /energy drink/i, /sports drink/i, /gatorade/i,
+      /powerade/i, /crystal light/i,
     ],
-  },
-  {
-    name: 'Pantry',
-    patterns: [
-      /pasta\b|spaghetti|linguine|penne|rigatoni|fettuccine|noodle/i,
-      /rice\b|quinoa|couscous|barley|lentil|chickpea|black\s+bean|kidney\s+bean/i,
-      /olive\s+oil|vegetable\s+oil|canola\s+oil|coconut\s+oil/i,
-      /tomato\s+sauce|marinara|classico|pasta\s+sauce/i,
-      /canned\s+tomato|diced\s+tomato|crushed\s+tomato|tomato\s+paste/i,
-      /soup\b|broth|stock\b/i,
-      /soy\s+sauce|fish\s+sauce|hot\s+sauce|sriracha|teriyaki|oyster\s+sauce/i,
-      /vinegar|mustard|ketchup|mayo|mayonnaise|relish|salsa/i,
-      /jam\b|jelly\b|peanut\s+butter|almond\s+butter|nut\s+butter|nutella/i,
-      /honey|maple\s+syrup|syrup\b/i,
-      /chip\b|chips\b|corn\s+chip|que\s+pasa|tortilla\s+chip|potato\s+chip|nacho/i,
-      /chocolate|dark\s+choc|swiss\s+delice|lindt|cocoa/i,
-      /coffee|espresso|tea\b|matcha/i,
-      /spice|seasoning|pepper\s+corn|cinnamon|cumin|turmeric|paprika/i,
-      /salt\b|sugar\b|brown\s+sugar/i,
-      /baking\s+powder|baking\s+soda|yeast|vanilla/i,
-      /snack\b|granola\s+bar|protein\s+bar/i,
-      /nut\b|nuts\b|almond|cashew|walnut|pecan|peanut|pistachio/i,
-    ],
-  },
-  {
-    name: 'Beverages',
-    patterns: [
-      /juice\b|orange\s+juice|apple\s+juice|cranberry\s+juice/i,
-      /water\b|sparkling\s+water|mineral\s+water|perrier|san\s+pellegrino/i,
-      /soda\b|pop\b|cola\b|pepsi|coca.cola|sprite|ginger\s+ale|7up/i,
-      /energy\s+drink|red\s+bull|monster\b/i,
-      /kombucha|kefir\b/i,
-    ],
+    exclude: [/\bwine\b/i, /\bbeer\b/i, /\bale\b/i, /\blager\b/i, /\bcider\b/i],
   },
 ];
 
-// Staples list for ranking boost
-const STAPLES = [
-  /chicken\s+thigh/i,
+// ── Staples list (for highlighting) ───────────────────────────────────────
+const STAPLE_TERMS = [
+  /chicken thigh/i,
   /classico/i,
-  /scotch\s+bonnet/i,
-  /\bpepper\b/i,
-  /\bmilk\b/i,
-  /\beggs?\b/i,
-  /\bbutter\b/i,
+  /scotch bonnet/i,
+  // milk: actual dairy milk only, not coconut/almond/oat/evaporated/condensed
+  /(?:whole|skim|2%|1%|homo|partly skimmed|lactose.free)\s+milk\b/i,
+  /\bdairyland\b.*\bmilk\b|\bmilk\b.*\bdairyland\b/i,
+  /\blactantia\b.*\bmilk\b|\bprairie farms milk\b/i,
+  // eggs: cartons only (not egg rolls, egg noodles, egg whites labelled as creations etc.)
+  /\beggs?,\s*\d+/i,
+  /\blarge\s+egg/i,
+  /\begg\b.*\d+['\s]?s\b(?!.*roll)/i,
+  // butter: dairy butter products, not peanut butter, nut butter, etc.
+  /(?<!peanut )(?<!nut )\bbutter\b(?! lettuce| danish| rice| tart| chicken| sauce| cream| cup| scotch| nut| bean)/i,
   /siggi/i,
   /gorgonzola/i,
   /balderson/i,
-  /swiss\s+delice/i,
-  /que\s+pasa/i,
-  /no\s+name\s+flour/i,
+  /swiss delice/i,
+  /que pasa/i,
+  /\bno name\b.*flour\b|\bflour\b.*\bno name\b/i,
 ];
 
-function isSkip(name, brand) {
-  const text = [name, brand].filter(Boolean).join(' ');
-  return SKIP_KEYWORDS.some(re => re.test(text));
+function isStaple(name) {
+  return STAPLE_TERMS.some(t => t.test(name));
 }
 
-function classify(name, brand) {
-  const text = [name, brand].filter(Boolean).join(' ');
+function isNonFood(name) {
+  if (!name) return true;
+  return NON_FOOD_TERMS.some(t => t.test(name));
+}
+
+function isAlcohol(name) {
+  if (!name) return false;
+  return ALCOHOL_TERMS.some(t => t.test(name));
+}
+
+function categorize(name) {
+  if (!name) return null;
   for (const cat of CATEGORIES) {
-    if (cat.patterns.some(re => re.test(text))) return cat.name;
+    const matches = cat.terms.some(t => t.test(name));
+    if (!matches) continue;
+    if (cat.exclude && cat.exclude.some(t => t.test(name))) continue;
+    return cat.key;
   }
   return null;
 }
 
-function isStaple(name, brand) {
-  const text = [name, brand].filter(Boolean).join(' ');
-  return STAPLES.some(re => re.test(text));
-}
+// ── Process stores ─────────────────────────────────────────────────────────
+const storeStats = {};
+const categorized = {};
+CATEGORIES.forEach(c => { categorized[c.key] = []; });
 
-function discountPct(item) {
-  if (!item.original_price || !item.price) return 0;
-  const orig = parseFloat(item.original_price);
-  const sale = parseFloat(item.price);
-  if (!orig || orig <= sale) return 0;
-  return Math.round(((orig - sale) / orig) * 100);
-}
+// Track seen item keys for deduplication across stores (best price wins)
+// key = normalized name; value = { idx, price }
+const seenItems = new Map();
 
-function formatPrice(item) {
-  let price = item.price ? `$${item.price}` : '';
-  if (item.price_unit) price += `/${item.price_unit}`;
-  return price;
-}
-
-// --- Build a canonical item key for cross-store deduplication ---
-function itemKey(name) {
-  return name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().split(' ').slice(0, 5).join(' ');
-}
-
-// --- Process each store ---
-const stats = {};
-// key: canonical item key, value: best deal object
-const crossStoreMap = {};
-
-const FOOD_STORES = new Set([
-  'Shoppers Drug Mart', // only food items pass filter
-  'Calgary Co-op',
-  'Safeway', // keep; Sobeys dropped
+// Process food stores in priority order (cheaper/bigger stores first for dedup)
+const STORE_ORDER = [
   'Real Canadian Superstore',
   'No Frills',
-  'Wholesale Club',
+  'Safeway',      // keep instead of Sobeys
+  'Calgary Co-op',
   'T&T Supermarket',
-]);
+  'Wholesale Club',
+  'Costco',
+];
 
-for (const store of raw) {
-  const storeName = DEDUPE_STORE[store.store_name] || store.store_name;
+// For Wholesale Club/Costco, scale prices aren't per-unit so be selective
+const BULK_STORES = new Set(['Wholesale Club', 'Costco']);
 
-  // Skip liquor/non-food stores
-  if (SKIP_STORES.has(store.store_name)) {
-    stats[store.store_name] = { kept: 0, dropped: store.items.length, reason: 'store skipped' };
-    continue;
-  }
+function normalizeItemKey(name) {
+  return name.toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\b(the|a|an|or|and|with|of|in|on|for|to|from|at|by|as)\b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .slice(0, 4)
+    .join(' ');
+}
 
-  // Sobeys is duplicate of Safeway
-  if (store.store_name === 'Sobeys') {
-    stats['Sobeys'] = { kept: 0, dropped: store.items.length, reason: 'duplicate of Safeway' };
-    continue;
-  }
+for (const storeName of STORE_ORDER) {
+  const store = raw.find(s => s.store_name === storeName);
+  if (!store) continue;
 
   let kept = 0, dropped = 0;
+  storeStats[storeName] = { kept: 0, dropped: 0 };
 
   for (const item of store.items) {
-    if (isSkip(item.name, item.brand)) { dropped++; continue; }
+    if (!item.name || !item.price) { dropped++; continue; }
+    if (isNonFood(item.name)) { dropped++; continue; }
+    if (isAlcohol(item.name)) { dropped++; continue; }
 
-    const category = classify(item.name, item.brand);
+    const category = categorize(item.name);
     if (!category) { dropped++; continue; }
 
-    const key = itemKey(item.name);
-    const disc = discountPct(item);
-    const staple = isStaple(item.name, item.brand);
+    const price = parseFloat(item.price);
+    if (isNaN(price) || price <= 0) { dropped++; continue; }
 
-    const candidate = {
+    // Skip obviously mega-bulk items from Wholesale Club unless staple
+    if (BULK_STORES.has(storeName) && !isStaple(item.name)) {
+      // Skip items over $30 from bulk stores (too large for household use)
+      if (price > 30) { dropped++; continue; }
+    }
+
+    const key = normalizeItemKey(item.name);
+    const existing = seenItems.get(key);
+
+    if (existing) {
+      // Keep if same category and this price is better
+      if (existing.category === category && price < existing.price) {
+        // Update with better price, note both stores
+        const entry = categorized[category][existing.idx];
+        entry.store_alt = `${entry.store} → ${storeName} @ $${item.price}`;
+        entry.price = `$${item.price}`;
+        entry.store = storeName;
+        seenItems.set(key, { ...existing, price, storeName });
+      } else if (existing.category === category) {
+        // Mention alternative store
+        const entry = categorized[existing.category][existing.idx];
+        if (!entry.alt_stores) entry.alt_stores = [];
+        entry.alt_stores.push({ store: storeName, price: `$${item.price}` });
+      }
+      dropped++;
+      continue;
+    }
+
+    const entry = {
       name: item.name,
       brand: item.brand || null,
-      price: formatPrice(item),
+      price: `$${item.price}`,
       original_price: item.original_price ? `$${item.original_price}` : null,
-      discount_pct: disc,
+      discount: item.discount || null,
       store: storeName,
-      category,
-      staple,
+      staple: isStaple(item.name),
       sale_start: store.sale_start,
       sale_end: store.sale_end,
       image_url: item.image_url || null,
-      raw_price: parseFloat(item.price) || 0,
-      raw_orig: parseFloat(item.original_price) || 0,
     };
 
-    // Cross-store dedup: keep best price, note alternatives
-    if (crossStoreMap[key]) {
-      const existing = crossStoreMap[key];
-      if (candidate.raw_price < existing.raw_price) {
-        candidate.also = `also $${existing.raw_price.toFixed(2)} @ ${existing.store}`;
-        crossStoreMap[key] = candidate;
-      } else {
-        existing.also = existing.also
-          ? `${existing.also}, $${candidate.raw_price.toFixed(2)} @ ${candidate.store}`
-          : `also $${candidate.raw_price.toFixed(2)} @ ${candidate.store}`;
-      }
-      kept++;
-    } else {
-      crossStoreMap[key] = candidate;
-      kept++;
-    }
+    const idx = categorized[category].length;
+    categorized[category].push(entry);
+    seenItems.set(key, { idx, category, price, storeName });
+    kept++;
   }
 
-  stats[storeName] = (stats[storeName] || { kept: 0, dropped: 0 });
-  stats[storeName].kept += kept;
-  stats[storeName].dropped += dropped;
+  storeStats[storeName] = { kept, dropped };
 }
 
-// --- Sort and cap per category ---
-const CATEGORY_ORDER = ['Meat & Seafood', 'Produce', 'Dairy', 'Bakery', 'Frozen', 'Pantry', 'Beverages'];
-const CAP = 20;
-
-const byCategory = {};
-for (const item of Object.values(crossStoreMap)) {
-  if (!byCategory[item.category]) byCategory[item.category] = [];
-  byCategory[item.category].push(item);
+// ── Rank items within each category ───────────────────────────────────────
+function rankScore(item) {
+  let score = 0;
+  if (item.staple) score += 100;
+  if (item.discount) score += Math.min(item.discount, 50);
+  if (item.original_price) score += 20;
+  return score;
 }
 
-// Rank: staples first, then discount%, then has original price
-for (const cat of Object.keys(byCategory)) {
-  byCategory[cat].sort((a, b) => {
-    if (a.staple !== b.staple) return b.staple - a.staple;
-    if (b.discount_pct !== a.discount_pct) return b.discount_pct - a.discount_pct;
-    if (!!b.original_price !== !!a.original_price) return !!b.original_price ? 1 : -1;
-    return 0;
-  });
-  byCategory[cat] = byCategory[cat].slice(0, CAP);
+for (const key of Object.keys(categorized)) {
+  categorized[key].sort((a, b) => rankScore(b) - rankScore(a));
+  // Cap at 20 per category
+  categorized[key] = categorized[key].slice(0, 20);
 }
 
-// Build output (strip internal fields)
-const output = {
-  date: new Date().toISOString().slice(0, 10),
-  categories: {},
-};
-
-for (const cat of CATEGORY_ORDER) {
-  if (!byCategory[cat] || byCategory[cat].length === 0) continue;
-  output.categories[cat] = byCategory[cat].map(item => ({
-    name: item.name,
-    brand: item.brand,
-    price: item.price,
-    original_price: item.original_price,
-    discount_pct: item.discount_pct || null,
-    store: item.store,
-    also: item.also || null,
-    staple: item.staple || null,
-    sale_start: item.sale_start,
-    sale_end: item.sale_end,
-    image_url: item.image_url,
-  }));
+// ── Remove empty categories ────────────────────────────────────────────────
+for (const key of Object.keys(categorized)) {
+  if (categorized[key].length === 0) delete categorized[key];
 }
 
+// ── Output ─────────────────────────────────────────────────────────────────
+const today = new Date().toISOString().split('T')[0];
+const output = { date: today, categories: categorized };
 writeFileSync(OUT_PATH, JSON.stringify(output, null, 2));
 
-// Print stats
-console.log('\n=== Classification Stats ===');
-for (const [store, s] of Object.entries(stats)) {
-  const reason = s.reason ? ` (${s.reason})` : '';
-  console.log(`  ${store}: kept ${s.kept}, dropped ${s.dropped}${reason}`);
+// ── Summary ────────────────────────────────────────────────────────────────
+console.log('\n=== Phase 2: Classify Summary ===');
+console.log('Store statistics:');
+for (const [store, stats] of Object.entries(storeStats)) {
+  console.log(`  ${store}: kept ${stats.kept}, dropped ${stats.dropped}`);
 }
-
-console.log('\n=== Category Totals ===');
+console.log('\nCategory totals:');
 let totalKept = 0;
-for (const cat of CATEGORY_ORDER) {
-  const n = output.categories[cat] ? output.categories[cat].length : 0;
-  if (n) { console.log(`  ${cat}: ${n}`); totalKept += n; }
+for (const [cat, items] of Object.entries(categorized)) {
+  console.log(`  ${cat}: ${items.length} items`);
+  totalKept += items.length;
 }
-console.log(`  TOTAL: ${totalKept} items`);
+const totalDropped = Object.values(storeStats).reduce((s, v) => s + v.dropped, 0);
+console.log(`\nTotal: ${totalKept} kept, ${totalDropped} dropped`);
 console.log(`\nWritten to ${OUT_PATH}`);
