@@ -1,56 +1,32 @@
 #!/usr/bin/env node
-// Phase 3: Post curated flyer deals to Discord in priority order.
+/**
+ * Phase 3: Post curated flyer deals to Discord
+ * Reads /tmp/eventfinder-flyer-curated.json
+ * Posts to DISCORD_FLYERS_WEBHOOK_URL
+ */
+
 import { readFileSync } from 'fs';
+import { setGlobalDispatcher, ProxyAgent } from 'undici';
 
 const CURATED_PATH = '/tmp/eventfinder-flyer-curated.json';
 const WEBHOOK_URL = process.env.DISCORD_FLYERS_WEBHOOK_URL;
 
-if (!WEBHOOK_URL) {
-  console.warn('WARNING: DISCORD_FLYERS_WEBHOOK_URL not set — skipping Discord post');
-  process.exit(0);
+// Configure proxy if set
+if (process.env.HTTPS_PROXY) {
+  setGlobalDispatcher(new ProxyAgent(process.env.HTTPS_PROXY));
 }
 
-const curated = JSON.parse(readFileSync(CURATED_PATH, 'utf8'));
-
-// Category emoji map
-const CAT_EMOJI = {
-  'Meat & Seafood': '🥩',
-  'Produce': '🥬',
-  'Dairy': '🧀',
-  'Bakery': '🍞',
-  'Frozen': '🧊',
-  'Pantry': '🥫',
-  'Beverages': '🥤',
+const CATEGORY_CONFIG = {
+  'Beverages':    { emoji: '🥤', color: 0x1abc9c, priority: 1 },
+  'Pantry':       { emoji: '🥫', color: 0xe67e22, priority: 2 },
+  'Bakery':       { emoji: '🍞', color: 0xf39c12, priority: 3 },
+  'Frozen':       { emoji: '🧊', color: 0x3498db, priority: 4 },
+  'Dairy':        { emoji: '🧀', color: 0x9b59b6, priority: 5 },
+  'Produce':      { emoji: '🥬', color: 0x2ecc71, priority: 6 },
+  'Meat & Seafood': { emoji: '🥩', color: 0xe74c3c, priority: 7 },
 };
 
-// Category colors (decimal)
-const CAT_COLOR = {
-  'Meat & Seafood': 15158332,  // red
-  'Produce': 3066993,          // green
-  'Dairy': 16776960,           // yellow
-  'Bakery': 15844367,          // peach/orange
-  'Frozen': 3447003,           // blue
-  'Pantry': 10181046,          // purple
-  'Beverages': 1752220,        // teal
-};
-
-function formatItem(item) {
-  const store = item.store;
-  const also = item.also ? ` *(${item.also})*` : '';
-  const brand = item.brand ? ` *(${item.brand})*` : '';
-  let price = item.price ? `**${item.price}**` : '';
-  if (item.original_price) price += ` ~~${item.original_price}~~`;
-  return `• ${item.name.slice(0, 80)}${brand} — ${price} @ ${store}${also}`;
-}
-
-function formatHighlight(item) {
-  const discStr = item.discount_pct ? ` (${item.discount_pct}% off)` : '';
-  let price = item.price ? `**${item.price}**` : '';
-  if (item.original_price) price += ` ~~${item.original_price}~~`;
-  return `• ${item.name.slice(0, 70)} — ${price} @ ${item.store}${discStr}`;
-}
-
-async function post(payload) {
+async function postToDiscord(payload) {
   const res = await fetch(WEBHOOK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -58,102 +34,142 @@ async function post(payload) {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Discord ${res.status}: ${text}`);
+    throw new Error(`Discord API error ${res.status}: ${text}`);
   }
-  // Rate limit buffer
+  // Discord rate limit: wait 1s between posts
   await new Promise(r => setTimeout(r, 1000));
 }
 
-function buildCategoryEmbed(catName, items) {
-  const emoji = CAT_EMOJI[catName] || '🛒';
-  const color = CAT_COLOR[catName] || 7506394;
-  const lines = items.map(formatItem);
-  // Split if too long
+function formatItemLine(item) {
+  const price = item.price ? `**${item.price}**` : '(price N/A)';
+  const orig = item.original_price ? ` ~~${item.original_price}~~` : '';
+  const store = ` @ ${item.store}`;
+  const brand = item.brand ? ` *(${item.brand})*` : '';
+  const alts = item.alternates && item.alternates.length > 0
+    ? ` *(also ${item.alternates.map(a => `${a.price} @ ${a.store}`).join(', ')})*`
+    : '';
+  const name = item.name.length > 60 ? item.name.substring(0, 57) + '…' : item.name;
+  return `• ${name}${brand} — ${price}${orig}${store}${alts}`;
+}
+
+function buildEmbedDescription(items) {
+  return items.map(formatItemLine).join('\n');
+}
+
+function chunkEmbeds(embeds, maxPerMsg = 10) {
   const chunks = [];
-  let current = '';
-  for (const line of lines) {
-    if (current.length + line.length + 1 > 4000) {
-      chunks.push(current);
-      current = line;
+  for (let i = 0; i < embeds.length; i += maxPerMsg) {
+    chunks.push(embeds.slice(i, i + maxPerMsg));
+  }
+  return chunks;
+}
+
+async function main() {
+  if (!WEBHOOK_URL) {
+    console.warn('⚠️  DISCORD_FLYERS_WEBHOOK_URL not set — skipping Discord post');
+    process.exit(0);
+  }
+
+  const curated = JSON.parse(readFileSync(CURATED_PATH, 'utf8'));
+  const categories = curated.categories;
+
+  // Count totals
+  const totalItems = Object.values(categories).reduce((n, arr) => n + arr.length, 0);
+  const storeSet = new Set();
+  for (const items of Object.values(categories)) {
+    for (const item of items) storeSet.add(item.store);
+  }
+  const numStores = storeSet.size;
+
+  // --- 1. Header message ---
+  await postToDiscord({
+    content: `🛒 **Flyer Deals** — ${totalItems} deals from ${numStores} stores · ${curated.date}`,
+  });
+  console.log('Posted header message');
+
+  // --- 2-4. Category embeds in posting order (low → high priority) ---
+  const sortedCategories = Object.entries(CATEGORY_CONFIG)
+    .sort((a, b) => a[1].priority - b[1].priority)
+    .map(([name]) => name);
+
+  const allCategoryEmbeds = [];
+
+  for (const catName of sortedCategories) {
+    const items = categories[catName];
+    if (!items || items.length === 0) continue;
+
+    const config = CATEGORY_CONFIG[catName];
+    const description = buildEmbedDescription(items);
+
+    // Split if over 4096 chars
+    if (description.length <= 4096) {
+      allCategoryEmbeds.push({
+        title: `${config.emoji} ${catName}`,
+        color: config.color,
+        description,
+      });
     } else {
-      current = current ? current + '\n' + line : line;
+      // Split into two halves
+      const mid = Math.ceil(items.length / 2);
+      allCategoryEmbeds.push({
+        title: `${config.emoji} ${catName} (1/2)`,
+        color: config.color,
+        description: buildEmbedDescription(items.slice(0, mid)),
+      });
+      allCategoryEmbeds.push({
+        title: `${config.emoji} ${catName} (2/2)`,
+        color: config.color,
+        description: buildEmbedDescription(items.slice(mid)),
+      });
     }
   }
-  if (current) chunks.push(current);
 
-  return chunks.map((desc, i) => ({
-    title: i === 0 ? `${emoji} ${catName}` : `${emoji} ${catName} (cont.)`,
-    color,
-    description: desc,
-  }));
-}
-
-// Collect all items flat for highlights
-const allItems = [];
-for (const [cat, items] of Object.entries(curated.categories)) {
-  for (const item of items) {
-    allItems.push({ ...item, category: cat });
+  // Post each category embed as its own message (Discord 6000-char-per-message limit)
+  for (const embed of allCategoryEmbeds) {
+    await postToDiscord({ embeds: [embed] });
+    console.log(`Posted: ${embed.title}`);
   }
+
+  // --- 5. Highlights embed (last — seen first in Discord) ---
+  // Find best staple + high-discount items
+  const allItems = Object.values(categories).flat();
+  const highlights = allItems
+    .filter(item => item.staple || item.discount_pct >= 20)
+    .sort((a, b) => {
+      // Staples first
+      if (a.staple && !b.staple) return -1;
+      if (!a.staple && b.staple) return 1;
+      // Then by discount %
+      const aD = a.discount_pct || 0;
+      const bD = b.discount_pct || 0;
+      return bD - aD;
+    })
+    .slice(0, 10);
+
+  if (highlights.length > 0) {
+    const highlightLines = highlights.map(item => {
+      const price = item.price ? `**${item.price}**` : '(price N/A)';
+      const orig = item.original_price ? ` ~~${item.original_price}~~` : '';
+      const disc = item.discount_pct ? ` *(${item.discount_pct}% off)*` : '';
+      const store = ` @ ${item.store}`;
+      const name = item.name.length > 55 ? item.name.substring(0, 52) + '…' : item.name;
+      return `• ${name} — ${price}${orig}${disc}${store}`;
+    }).join('\n');
+
+    await postToDiscord({
+      embeds: [{
+        title: '⭐ Highlights — This Week\'s Best Deals',
+        color: 0xffb800,
+        description: highlightLines,
+      }],
+    });
+    console.log('Posted highlights embed');
+  }
+
+  console.log(`\n✅ Posted to Discord: ${totalItems} items across ${Object.keys(categories).length} categories`);
 }
 
-// Highlights: staple items with discounts first, then highest discount %
-const highlights = allItems
-  .filter(i => i.staple || i.discount_pct > 20)
-  .sort((a, b) => {
-    if (a.staple !== b.staple) return (b.staple ? 1 : 0) - (a.staple ? 1 : 0);
-    return (b.discount_pct || 0) - (a.discount_pct || 0);
-  })
-  .slice(0, 10);
-
-// Count totals
-const totalItems = allItems.length;
-const storeSet = new Set(allItems.map(i => i.store));
-const totalStores = storeSet.size;
-const dateStr = curated.date;
-
-// Posting order (top = first posted = seen last in channel)
-const POSTING_ORDER = [
-  'Beverages',
-  'Pantry',
-  'Bakery',
-  'Frozen',
-  'Dairy',
-  'Produce',
-  'Meat & Seafood',
-];
-
-console.log('Posting to Discord...');
-
-// 1. Header message
-await post({
-  content: `🛒 **Flyer Deals** — ${totalItems} deals from ${totalStores} stores · ${dateStr}`,
+main().catch(err => {
+  console.error('Discord post failed:', err.message);
+  process.exit(1);
 });
-console.log('  ✓ Header posted');
-
-// 2. Category embeds (low → high priority)
-for (const catName of POSTING_ORDER) {
-  const items = curated.categories[catName];
-  if (!items || items.length === 0) continue;
-
-  const embeds = buildCategoryEmbed(catName, items);
-  // Post in chunks of max 10 embeds
-  for (let i = 0; i < embeds.length; i += 10) {
-    await post({ embeds: embeds.slice(i, i + 10) });
-  }
-  console.log(`  ✓ ${catName} posted (${items.length} items)`);
-}
-
-// 3. Highlights embed (last posted = seen first)
-if (highlights.length > 0) {
-  const highlightLines = highlights.map(formatHighlight);
-  await post({
-    embeds: [{
-      title: '⭐ Highlights — This Week\'s Best Deals',
-      color: 16766720,
-      description: highlightLines.join('\n'),
-    }],
-  });
-  console.log(`  ✓ Highlights posted (${highlights.length} items)`);
-}
-
-console.log('Done — all messages posted to Discord.');
