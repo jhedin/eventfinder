@@ -186,7 +186,7 @@ function formatDigest(events) {
   const allInstanceIds = events.map(e => e.instance_id);
 
   // Header message
-  const today = new Date(2026, 8, 19); // Sep 19, 2026
+  const today = new Date(2026, 9, 1); // Oct 1, 2026
   const dateStr = today.toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   const totalEvents = events.length;
   const headerMsg = `🗓️ **EventFinder Digest** — ${totalEvents} new events · ${dateStr}`;
