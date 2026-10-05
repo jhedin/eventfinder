@@ -1,108 +1,99 @@
 #!/usr/bin/env node
 /**
- * Phase 2.5: Store curated flyer items into the database
- * Reads /tmp/eventfinder-flyer-curated.json
- * Upserts sources with type='flyer', inserts flyer_items with INSERT OR IGNORE
+ * Store curated flyer items into the database.
+ * Reads: /tmp/eventfinder-flyer-curated.json, /tmp/eventfinder-flyer-batch-flipp.json
  */
 
-import { readFileSync } from 'fs';
+import fs from 'fs';
 import { createHash } from 'crypto';
 import Database from 'better-sqlite3';
+import path from 'path';
 import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DB_PATH = path.join(__dirname, '..', 'data', 'eventfinder.db');
 const CURATED_PATH = '/tmp/eventfinder-flyer-curated.json';
-const DB_PATH = join(__dirname, '..', 'data', 'eventfinder.db');
+const RAW_PATH = '/tmp/eventfinder-flyer-batch-flipp.json';
 
-function itemHash(itemName, brand, salePrice, sourceId, saleEnd) {
-  const str = [itemName, brand || '', salePrice, String(sourceId), saleEnd || ''].join('|');
-  return createHash('sha256').update(str).digest('hex').slice(0, 32);
+const db = new Database(DB_PATH);
+const curated = JSON.parse(fs.readFileSync(CURATED_PATH, 'utf8'));
+const raw = JSON.parse(fs.readFileSync(RAW_PATH, 'utf8'));
+
+// Build lookup: storeName → { sale_start, sale_end, itemsByName }
+const storeRaw = {};
+for (const store of Object.values(raw)) {
+  if (!store.success) continue;
+  const key = store.store_name;
+  storeRaw[key] = {
+    sale_start: store.sale_start,
+    sale_end: store.sale_end,
+    items: new Map((store.items || []).map(i => [i.name, i])),
+  };
 }
 
-function main() {
-  const curated = JSON.parse(readFileSync(CURATED_PATH, 'utf8'));
-  const db = new Database(DB_PATH);
+function ensureSource(storeName) {
+  const url = `flipp://${storeName.toLowerCase().replace(/\s+/g, '-')}`;
+  let row = db.prepare('SELECT id FROM sources WHERE url = ?').get(url);
+  if (!row) {
+    db.prepare(`INSERT INTO sources (url, name, type) VALUES (?, ?, 'flyer')`).run(url, storeName);
+    row = db.prepare('SELECT id FROM sources WHERE url = ?').get(url);
+  }
+  return row.id;
+}
 
-  // Ensure WAL mode for concurrent access safety
-  db.pragma('journal_mode = WAL');
+function hashItem(itemName, brand, salePrice, sourceId, saleEnd) {
+  return createHash('sha256')
+    .update([itemName, brand || '', salePrice || '', String(sourceId), saleEnd || ''].join('|'))
+    .digest('hex')
+    .slice(0, 32);
+}
 
-  let stored = 0, skipped = 0;
+const insertItem = db.prepare(`
+  INSERT OR IGNORE INTO flyer_items
+    (item_hash, item_name, brand, sale_price, regular_price, category, sale_start, sale_end, image_url, source_id, source_url)
+  VALUES
+    (@item_hash, @item_name, @brand, @sale_price, @regular_price, @category, @sale_start, @sale_end, @image_url, @source_id, @source_url)
+`);
 
-  // Collect all unique store names from curated categories
-  const storeNames = new Set();
-  for (const items of Object.values(curated.categories)) {
+let stored = 0, skipped = 0;
+
+const storeAll = db.transaction(() => {
+  for (const [category, items] of Object.entries(curated.categories)) {
     for (const item of items) {
-      storeNames.add(item.store);
-    }
-  }
+      const sourceId = ensureSource(item.store);
+      const storeData = storeRaw[item.store] || {};
+      const rawItem = storeData.items ? storeData.items.get(item.name) : null;
+      const saleStart = storeData.sale_start || null;
+      const saleEnd = storeData.sale_end || null;
+      const imageUrl = rawItem ? rawItem.image_url || null : null;
+      const sourceUrl = `flipp://${item.store.toLowerCase().replace(/\s+/g, '-')}`;
 
-  // Ensure a flyer source exists for each store
-  const ensureSource = db.prepare(`
-    INSERT INTO sources (url, name, type, active)
-    VALUES (?, ?, 'flyer', 1)
-    ON CONFLICT(url) DO UPDATE SET name=excluded.name
-    RETURNING id
-  `);
-  const getSource = db.prepare(`SELECT id FROM sources WHERE url = ?`);
+      const itemHash = hashItem(item.name, item.brand, item.price, sourceId, saleEnd);
 
-  const sourceIds = {};
-  for (const storeName of storeNames) {
-    const url = 'flipp://' + storeName.toLowerCase().replace(/\s+/g, '-');
-    let row = getSource.get(url);
-    if (!row) {
-      row = ensureSource.get(url, storeName);
-    }
-    sourceIds[storeName] = row.id;
-  }
+      const result = insertItem.run({
+        item_hash: itemHash,
+        item_name: item.name,
+        brand: item.brand || null,
+        sale_price: item.price || null,
+        regular_price: item.original_price || null,
+        category,
+        sale_start: saleStart,
+        sale_end: saleEnd,
+        image_url: imageUrl,
+        source_id: sourceId,
+        source_url: sourceUrl,
+      });
 
-  // Insert flyer items
-  const insertItem = db.prepare(`
-    INSERT OR IGNORE INTO flyer_items (
-      item_hash, item_name, brand, sale_price, regular_price,
-      category, sale_start, sale_end, image_url, source_id, source_url
-    ) VALUES (
-      ?, ?, ?, ?, ?,
-      ?, ?, ?, ?, ?, ?
-    )
-  `);
-
-  const insertMany = db.transaction((items) => {
-    for (const [category, itemList] of Object.entries(items)) {
-      for (const item of itemList) {
-        const sourceId = sourceIds[item.store];
-        const sourceUrl = 'flipp://' + item.store.toLowerCase().replace(/\s+/g, '-');
-        const hash = itemHash(item.name, item.brand, item.price, sourceId, item.sale_end);
-
-        const result = insertItem.run(
-          hash,
-          item.name,
-          item.brand || null,
-          item.price,
-          item.original_price || null,
-          category,
-          item.sale_start || null,
-          item.sale_end || null,
-          item.image_url || null,
-          sourceId,
-          sourceUrl
-        );
-
-        if (result.changes > 0) {
-          stored++;
-        } else {
-          skipped++;
-        }
+      if (result.changes > 0) {
+        stored++;
+      } else {
+        skipped++;
       }
     }
-  });
+  }
+});
 
-  insertMany(curated.categories);
+storeAll();
+db.close();
 
-  console.log(`${stored} items stored, ${skipped} duplicates skipped`);
-  db.close();
-}
-
-main();
+console.log(`${stored} items stored, ${skipped} duplicates skipped`);

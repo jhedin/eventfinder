@@ -1,32 +1,57 @@
 #!/usr/bin/env node
 /**
- * Phase 3: Post curated flyer deals to Discord
- * Reads /tmp/eventfinder-flyer-curated.json
- * Posts to DISCORD_FLYERS_WEBHOOK_URL
+ * Post curated flyer deals to Discord.
+ * Reads: /tmp/eventfinder-flyer-curated.json
  */
 
-import { readFileSync } from 'fs';
-import { setGlobalDispatcher, ProxyAgent } from 'undici';
+import fs from 'fs';
 
 const CURATED_PATH = '/tmp/eventfinder-flyer-curated.json';
 const WEBHOOK_URL = process.env.DISCORD_FLYERS_WEBHOOK_URL;
 
-// Configure proxy if set
-if (process.env.HTTPS_PROXY) {
-  setGlobalDispatcher(new ProxyAgent(process.env.HTTPS_PROXY));
+if (!WEBHOOK_URL) {
+  console.warn('Warning: DISCORD_FLYERS_WEBHOOK_URL not set. Skipping Discord post.');
+  process.exit(0);
 }
 
-const CATEGORY_CONFIG = {
-  'Beverages':    { emoji: '🥤', color: 0x1abc9c, priority: 1 },
-  'Pantry':       { emoji: '🥫', color: 0xe67e22, priority: 2 },
-  'Bakery':       { emoji: '🍞', color: 0xf39c12, priority: 3 },
-  'Frozen':       { emoji: '🧊', color: 0x3498db, priority: 4 },
-  'Dairy':        { emoji: '🧀', color: 0x9b59b6, priority: 5 },
-  'Produce':      { emoji: '🥬', color: 0x2ecc71, priority: 6 },
-  'Meat & Seafood': { emoji: '🥩', color: 0xe74c3c, priority: 7 },
-};
+const curated = JSON.parse(fs.readFileSync(CURATED_PATH, 'utf8'));
 
-async function postToDiscord(payload) {
+// Staples list for highlights detection
+const STAPLES = [
+  'chicken thigh', 'classico', 'scotch bonnet', 'bell pepper', 'pepper',
+  'milk', 'egg', 'butter', 'siggi', 'gorgonzola', 'balderson', 'cheddar',
+  'swiss delice', 'que pasa', 'corn chip', 'no name flour', 'flour',
+];
+
+function isStaple(item) {
+  const text = (item.name + ' ' + (item.brand || '')).toLowerCase();
+  return STAPLES.some(s => text.includes(s));
+}
+
+function formatItem(item, includeDiscount = false) {
+  let line = `• ${item.name}`;
+  if (item.brand) line += ` *(${item.brand})*`;
+  line += ` — **${item.price || '?'}**`;
+  if (item.original_price) line += ` ~~${item.original_price}~~`;
+  line += ` @ ${item.store}`;
+  if (includeDiscount && item.discount_pct) line += ` (${item.discount_pct}% off)`;
+  if (item.also_at) line += `\n  *(also: ${item.also_at})*`;
+  return line;
+}
+
+function countItems() {
+  return Object.values(curated.categories).reduce((sum, items) => sum + items.length, 0);
+}
+
+function countStores() {
+  const stores = new Set();
+  for (const items of Object.values(curated.categories)) {
+    for (const item of items) stores.add(item.store);
+  }
+  return stores.size;
+}
+
+async function post(payload) {
   const res = await fetch(WEBHOOK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -34,142 +59,101 @@ async function postToDiscord(payload) {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Discord API error ${res.status}: ${text}`);
+    throw new Error(`Discord error ${res.status}: ${text}`);
   }
-  // Discord rate limit: wait 1s between posts
-  await new Promise(r => setTimeout(r, 1000));
+  // Rate limit: wait between posts
+  await new Promise(r => setTimeout(r, 500));
 }
 
-function formatItemLine(item) {
-  const price = item.price ? `**${item.price}**` : '(price N/A)';
-  const orig = item.original_price ? ` ~~${item.original_price}~~` : '';
-  const store = ` @ ${item.store}`;
-  const brand = item.brand ? ` *(${item.brand})*` : '';
-  const alts = item.alternates && item.alternates.length > 0
-    ? ` *(also ${item.alternates.map(a => `${a.price} @ ${a.store}`).join(', ')})*`
-    : '';
-  const name = item.name.length > 60 ? item.name.substring(0, 57) + '…' : item.name;
-  return `• ${name}${brand} — ${price}${orig}${store}${alts}`;
-}
+const CATEGORY_ICONS = {
+  'Meat & Seafood': '🥩',
+  'Produce': '🥬',
+  'Dairy': '🧀',
+  'Bakery': '🍞',
+  'Frozen': '🧊',
+  'Pantry': '🥫',
+  'Beverages': '🥤',
+};
 
-function buildEmbedDescription(items) {
-  return items.map(formatItemLine).join('\n');
-}
+const CATEGORY_COLORS = {
+  'Meat & Seafood': 15158332,  // red
+  'Produce': 5763719,          // green
+  'Dairy': 16776960,           // yellow
+  'Bakery': 15844367,          // orange
+  'Frozen': 3447003,           // blue
+  'Pantry': 10181046,          // purple
+  'Beverages': 1752220,        // teal
+};
 
-function chunkEmbeds(embeds, maxPerMsg = 10) {
-  const chunks = [];
-  for (let i = 0; i < embeds.length; i += maxPerMsg) {
-    chunks.push(embeds.slice(i, i + maxPerMsg));
-  }
-  return chunks;
-}
+// Post order: header, then low→high priority
+const POST_ORDER = ['Beverages', 'Pantry', 'Bakery', 'Frozen', 'Dairy', 'Produce', 'Meat & Seafood'];
 
-async function main() {
-  if (!WEBHOOK_URL) {
-    console.warn('⚠️  DISCORD_FLYERS_WEBHOOK_URL not set — skipping Discord post');
-    process.exit(0);
-  }
+(async () => {
+  const totalItems = countItems();
+  const totalStores = countStores();
+  const date = curated.date;
 
-  const curated = JSON.parse(readFileSync(CURATED_PATH, 'utf8'));
-  const categories = curated.categories;
-
-  // Count totals
-  const totalItems = Object.values(categories).reduce((n, arr) => n + arr.length, 0);
-  const storeSet = new Set();
-  for (const items of Object.values(categories)) {
-    for (const item of items) storeSet.add(item.store);
-  }
-  const numStores = storeSet.size;
-
-  // --- 1. Header message ---
-  await postToDiscord({
-    content: `🛒 **Flyer Deals** — ${totalItems} deals from ${numStores} stores · ${curated.date}`,
+  // 1. Header message
+  await post({
+    content: `🛒 **Flyer Deals** — ${totalItems} deals from ${totalStores} stores · ${date}`,
   });
-  console.log('Posted header message');
+  console.log('Posted: header');
 
-  // --- 2-4. Category embeds in posting order (low → high priority) ---
-  const sortedCategories = Object.entries(CATEGORY_CONFIG)
-    .sort((a, b) => a[1].priority - b[1].priority)
-    .map(([name]) => name);
-
-  const allCategoryEmbeds = [];
-
-  for (const catName of sortedCategories) {
-    const items = categories[catName];
+  // 2. Category embeds (low → high priority)
+  for (const cat of POST_ORDER) {
+    const items = curated.categories[cat];
     if (!items || items.length === 0) continue;
 
-    const config = CATEGORY_CONFIG[catName];
-    const description = buildEmbedDescription(items);
+    const icon = CATEGORY_ICONS[cat] || '📦';
+    const color = CATEGORY_COLORS[cat] || 7506394;
 
-    // Split if over 4096 chars
-    if (description.length <= 4096) {
-      allCategoryEmbeds.push({
-        title: `${config.emoji} ${catName}`,
-        color: config.color,
-        description,
-      });
-    } else {
-      // Split into two halves
-      const mid = Math.ceil(items.length / 2);
-      allCategoryEmbeds.push({
-        title: `${config.emoji} ${catName} (1/2)`,
-        color: config.color,
-        description: buildEmbedDescription(items.slice(0, mid)),
-      });
-      allCategoryEmbeds.push({
-        title: `${config.emoji} ${catName} (2/2)`,
-        color: config.color,
-        description: buildEmbedDescription(items.slice(mid)),
+    // Build description, splitting if needed
+    const lines = items.map(item => formatItem(item));
+    const chunks = [];
+    let current = '';
+    for (const line of lines) {
+      if ((current + '\n' + line).length > 4000) {
+        chunks.push(current);
+        current = line;
+      } else {
+        current = current ? current + '\n' + line : line;
+      }
+    }
+    if (current) chunks.push(current);
+
+    for (let i = 0; i < chunks.length; i++) {
+      const title = i === 0 ? `${icon} ${cat}` : `${icon} ${cat} (cont'd)`;
+      await post({
+        embeds: [{ title, color, description: chunks[i] }],
       });
     }
+    console.log(`Posted: ${cat} (${items.length} items)`);
   }
 
-  // Post each category embed as its own message (Discord 6000-char-per-message limit)
-  for (const embed of allCategoryEmbeds) {
-    await postToDiscord({ embeds: [embed] });
-    console.log(`Posted: ${embed.title}`);
-  }
-
-  // --- 5. Highlights embed (last — seen first in Discord) ---
-  // Find best staple + high-discount items
-  const allItems = Object.values(categories).flat();
+  // 3. Highlights embed (best preference-matching deals)
+  const allItems = Object.values(curated.categories).flat();
   const highlights = allItems
-    .filter(item => item.staple || item.discount_pct >= 20)
+    .filter(item => isStaple(item) || (item.discount_pct && item.discount_pct >= 25))
     .sort((a, b) => {
-      // Staples first
-      if (a.staple && !b.staple) return -1;
-      if (!a.staple && b.staple) return 1;
-      // Then by discount %
-      const aD = a.discount_pct || 0;
-      const bD = b.discount_pct || 0;
-      return bD - aD;
+      if (a.staple !== b.staple) return b.staple ? 1 : -1;
+      return (b.discount_pct || 0) - (a.discount_pct || 0);
     })
     .slice(0, 10);
 
   if (highlights.length > 0) {
-    const highlightLines = highlights.map(item => {
-      const price = item.price ? `**${item.price}**` : '(price N/A)';
-      const orig = item.original_price ? ` ~~${item.original_price}~~` : '';
-      const disc = item.discount_pct ? ` *(${item.discount_pct}% off)*` : '';
-      const store = ` @ ${item.store}`;
-      const name = item.name.length > 55 ? item.name.substring(0, 52) + '…' : item.name;
-      return `• ${name} — ${price}${orig}${disc}${store}`;
-    }).join('\n');
-
-    await postToDiscord({
+    const description = highlights.map(item => formatItem(item, true)).join('\n');
+    await post({
       embeds: [{
         title: '⭐ Highlights — This Week\'s Best Deals',
-        color: 0xffb800,
-        description: highlightLines,
+        color: 16766720,
+        description,
       }],
     });
-    console.log('Posted highlights embed');
+    console.log(`Posted: highlights (${highlights.length} items)`);
   }
 
-  console.log(`\n✅ Posted to Discord: ${totalItems} items across ${Object.keys(categories).length} categories`);
-}
-
-main().catch(err => {
-  console.error('Discord post failed:', err.message);
+  console.log('\nAll Discord messages posted successfully.');
+})().catch(err => {
+  console.error('Discord posting failed:', err.message);
   process.exit(1);
 });
