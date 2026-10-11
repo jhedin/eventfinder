@@ -34,6 +34,7 @@ const MERCHANTS = {
   3407: 'Co-op Wine Spirits Beer',
   3656: 'Sobeys & Safeway Liquor',
   6373: 'T&T Supermarket',
+  2062: 'Save-On-Foods',
 };
 
 function withTimeout(promise, ms) {
