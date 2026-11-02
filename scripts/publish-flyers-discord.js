@@ -102,20 +102,21 @@ for (const [cat, items] of sortedCats) {
 
 // ── 3. Highlights embed (last = appears first in channel) ─────────────────
 const allStaples = Object.entries(curated.categories)
-  .flatMap(([, items]) => items.filter(i => i.staple));
+  .flatMap(([, items]) => items.filter(i => i.staple || i.is_staple));
 
 if (allStaples.length > 0) {
   // Sort by discount desc, then items without discount by relevance
   allStaples.sort((a, b) => {
-    const da = a.discount || 0;
-    const db2 = b.discount || 0;
+    const da = a.discount_pct || a.discount || 0;
+    const db2 = b.discount_pct || b.discount || 0;
     return db2 - da;
   });
 
   const highlightLines = allStaples.slice(0, 10).map(item => {
     let line = `• ${item.name} — **${item.price}**`;
     if (item.original_price) line += ` ~~${item.original_price}~~`;
-    if (item.discount) line += ` (${item.discount}% off)`;
+    const discPct = item.discount_pct || item.discount;
+    if (discPct) line += ` (${discPct}% off)`;
     line += ` @ ${item.store}`;
     return line;
   });
